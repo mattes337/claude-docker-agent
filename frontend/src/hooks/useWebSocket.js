@@ -1,0 +1,131 @@
+import { useEffect, useState, useRef } from 'react';
+
+export const useWebSocket = (sessions, activeSessionId) => {
+  const [isConnected, setIsConnected] = useState(false);
+  const wsRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
+  const reconnectAttempts = useRef(0);
+
+  const connect = () => {
+    try {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      
+      wsRef.current = new WebSocket(wsUrl);
+
+      wsRef.current.onopen = () => {
+        console.log('WebSocket connected');
+        setIsConnected(true);
+        reconnectAttempts.current = 0;
+        
+        // Subscribe to active session if exists
+        if (activeSessionId) {
+          wsRef.current.send(JSON.stringify({
+            type: 'subscribe',
+            sessionId: activeSessionId
+          }));
+        }
+      };
+
+      wsRef.current.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleWebSocketMessage(data, sessions);
+        } catch (error) {
+          console.error('Failed to parse WebSocket message:', error);
+        }
+      };
+
+      wsRef.current.onclose = () => {
+        console.log('WebSocket disconnected');
+        setIsConnected(false);
+        
+        // Attempt to reconnect with exponential backoff
+        if (reconnectAttempts.current < 5) {
+          const delay = Math.pow(2, reconnectAttempts.current) * 1000;
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectAttempts.current++;
+            connect();
+          }, delay);
+        }
+      };
+
+      wsRef.current.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setIsConnected(false);
+      };
+    } catch (error) {
+      console.error('Failed to create WebSocket connection:', error);
+      setIsConnected(false);
+    }
+  };
+
+  const handleWebSocketMessage = (data, sessions) => {
+    switch (data.type) {
+      case 'session_created':
+        console.log('Session created:', data.session);
+        break;
+      
+      case 'session_ready':
+        console.log('Session ready:', data.sessionId);
+        const readySession = sessions.get(data.sessionId);
+        if (readySession) {
+          readySession.status = 'running';
+          readySession.state = 'ready';
+        }
+        break;
+      
+      case 'output':
+        const outputSession = sessions.get(data.sessionId);
+        if (outputSession) {
+          outputSession.output = (outputSession.output || '') + data.output;
+        }
+        break;
+      
+      case 'session_stopped':
+        console.log('Session stopped:', data.sessionId);
+        const stoppedSession = sessions.get(data.sessionId);
+        if (stoppedSession) {
+          stoppedSession.status = 'stopped';
+          stoppedSession.state = 'stopped';
+        }
+        break;
+      
+      case 'resume_scheduled':
+        console.log('Resume scheduled for session:', data.sessionId);
+        const resumeSession = sessions.get(data.sessionId);
+        if (resumeSession) {
+          resumeSession.state = 'waiting_for_resume';
+        }
+        break;
+      
+      default:
+        console.log('Unknown WebSocket message type:', data.type);
+    }
+  };
+
+  useEffect(() => {
+    connect();
+
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
+
+  // Subscribe to active session changes
+  useEffect(() => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && activeSessionId) {
+      wsRef.current.send(JSON.stringify({
+        type: 'subscribe',
+        sessionId: activeSessionId
+      }));
+    }
+  }, [activeSessionId]);
+
+  return { isConnected };
+};

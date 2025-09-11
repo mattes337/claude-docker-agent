@@ -1,0 +1,291 @@
+const express = require('express');
+const { body, param, validationResult } = require('express-validator');
+
+module.exports = (sessionManager) => {
+    const router = express.Router();
+
+    // Validation middleware
+    const handleValidationErrors = (req, res, next) => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                success: false,
+                error: 'Validation failed',
+                details: errors.array()
+            });
+        }
+        next();
+    };
+
+    // Get all sessions
+    router.get('/', (req, res) => {
+        try {
+            const sessions = sessionManager.getAllSessions();
+            res.json({
+                success: true,
+                sessions,
+                count: sessions.length
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                error: error.message
+            });
+        }
+    });
+
+    // Get specific session
+    router.get('/:id', 
+        param('id').isUUID().withMessage('Invalid session ID'),
+        handleValidationErrors,
+        (req, res) => {
+            try {
+                const session = sessionManager.getSessionInfo(req.params.id);
+                
+                if (!session) {
+                    return res.status(404).json({
+                        success: false,
+                        error: 'Session not found'
+                    });
+                }
+                
+                res.json({
+                    success: true,
+                    session
+                });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Get session output
+    router.get('/:id/output',
+        param('id').isUUID().withMessage('Invalid session ID'),
+        handleValidationErrors,
+        (req, res) => {
+            try {
+                const session = sessionManager.getSession(req.params.id);
+                
+                if (!session) {
+                    return res.status(404).json({
+                        success: false,
+                        error: 'Session not found'
+                    });
+                }
+                
+                const { lines, offset } = req.query;
+                let output = session.output;
+                
+                // Apply offset if specified
+                if (offset && !isNaN(offset)) {
+                    output = output.slice(parseInt(offset));
+                }
+                
+                // Limit lines if specified
+                if (lines && !isNaN(lines)) {
+                    output = output.slice(-parseInt(lines));
+                }
+                
+                res.json({
+                    success: true,
+                    output,
+                    totalLines: session.output.length
+                });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Create new session
+    router.post('/',
+        [
+            body('name').optional().isString().trim().isLength({ min: 1, max: 100 }),
+            body('repoUrl').optional().isURL().withMessage('Invalid repository URL'),
+            body('branch').optional().isString().trim().isLength({ min: 1, max: 100 }),
+            body('memory').optional().isInt({ min: 128 * 1024 * 1024, max: 8 * 1024 * 1024 * 1024 }),
+            body('cpuShares').optional().isInt({ min: 128, max: 4096 }),
+            body('env').optional().isArray(),
+            body('claudeArgs').optional().isArray()
+        ],
+        handleValidationErrors,
+        async (req, res) => {
+            try {
+                const config = {
+                    name: req.body.name,
+                    repoUrl: req.body.repoUrl,
+                    branch: req.body.branch || 'main',
+                    memory: req.body.memory,
+                    cpuShares: req.body.cpuShares,
+                    env: req.body.env || [],
+                    claudeArgs: req.body.claudeArgs || []
+                };
+
+                const result = await sessionManager.createSession(config);
+                
+                if (result.success) {
+                    res.status(201).json(result);
+                } else {
+                    res.status(400).json(result);
+                }
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Execute command in session
+    router.post('/:id/execute',
+        [
+            param('id').isUUID().withMessage('Invalid session ID'),
+            body('prompt').isString().trim().isLength({ min: 1 }).withMessage('Prompt is required'),
+            body('options').optional().isObject()
+        ],
+        handleValidationErrors,
+        async (req, res) => {
+            try {
+                const { prompt, options = {} } = req.body;
+                const result = await sessionManager.executeCommand(req.params.id, prompt, options);
+                
+                res.json(result);
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Stop session
+    router.post('/:id/stop',
+        [
+            param('id').isUUID().withMessage('Invalid session ID'),
+            body('force').optional().isBoolean()
+        ],
+        handleValidationErrors,
+        async (req, res) => {
+            try {
+                const { force = false } = req.body;
+                const result = await sessionManager.stopSession(req.params.id, force);
+                
+                res.json(result);
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Delete session
+    router.delete('/:id',
+        param('id').isUUID().withMessage('Invalid session ID'),
+        handleValidationErrors,
+        async (req, res) => {
+            try {
+                // First stop the session
+                await sessionManager.stopSession(req.params.id, true);
+                
+                // Then cleanup
+                await sessionManager.cleanupSession(req.params.id);
+                
+                res.json({
+                    success: true,
+                    message: 'Session deleted successfully'
+                });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Get session statistics
+    router.get('/:id/stats',
+        param('id').isUUID().withMessage('Invalid session ID'),
+        handleValidationErrors,
+        async (req, res) => {
+            try {
+                const session = sessionManager.getSession(req.params.id);
+                
+                if (!session) {
+                    return res.status(404).json({
+                        success: false,
+                        error: 'Session not found'
+                    });
+                }
+                
+                const stats = {
+                    id: session.id,
+                    name: session.name,
+                    status: session.status,
+                    state: session.state,
+                    createdAt: session.createdAt,
+                    lastActivity: session.lastActivity,
+                    uptime: session.createdAt ? Date.now() - session.createdAt.getTime() : 0,
+                    outputLines: session.output.length,
+                    queuedMessages: session.messageQueue.length,
+                    processingMessage: session.processingMessage,
+                    conversationId: session.conversationId
+                };
+                
+                res.json({
+                    success: true,
+                    stats
+                });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Clear session output
+    router.post('/:id/clear',
+        param('id').isUUID().withMessage('Invalid session ID'),
+        handleValidationErrors,
+        (req, res) => {
+            try {
+                const session = sessionManager.getSession(req.params.id);
+                
+                if (!session) {
+                    return res.status(404).json({
+                        success: false,
+                        error: 'Session not found'
+                    });
+                }
+                
+                session.output = [];
+                sessionManager.addOutput(req.params.id, '🧹 Output cleared\n', 'system');
+                
+                res.json({
+                    success: true,
+                    message: 'Session output cleared'
+                });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    return router;
+};

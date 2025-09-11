@@ -17,3 +17,5 @@
 - Has auth tokens for git servers
 - Has claude installed
 - Has git installed
+- question: one image per dev stack? python, typescript, c#?
+-- this way we can install all the MCP we need in the image directly

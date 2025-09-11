@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  claude-docker-agent:
+    build: .
+    container_name: claude-docker-agent
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - WORKSPACES_DIR=/app/workspaces
+      - CLAUDE_BASE_IMAGE=claude-session:latest
+      - DOCKER_NETWORK=claude-network
+      - CLEANUP_WORKSPACES=false
+      - CORS_ORIGIN=*
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - workspaces:/app/workspaces
+      - ./logs:/app/logs
+    networks:
+      - claude-network
+    restart: unless-stopped
+    depends_on:
+      - session-builder
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  session-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.session
+    image: claude-session:latest
+    container_name: claude-session-builder
+    command: ["echo", "Session image built successfully"]
+    networks:
+      - claude-network
+
+volumes:
+  workspaces:
+    driver: local
+
+networks:
+  claude-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
