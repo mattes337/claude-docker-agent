@@ -1,5 +1,5 @@
 import React from 'react';
-import { Github, GitBranch } from 'lucide-react';
+import { Github, GitBranch, CheckCircle, AlertCircle, Loader, MoreHorizontal } from 'lucide-react';
 import clsx from 'clsx';
 
 const SessionItem = ({ session, isActive, onClick }) => {
@@ -8,18 +8,66 @@ const SessionItem = ({ session, isActive, onClick }) => {
     return repoUrl.split('/').pop().replace('.git', '');
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
+  const getStatusInfo = (status, state) => {
+    // Priority: state over status for more specific indicators
+    const currentState = state || status;
+    
+    switch (currentState) {
+      case 'waiting_input':
+        return {
+          icon: <AlertCircle size={14} className="status-icon pulsing" />,
+          color: 'waiting-input',
+          text: 'Waiting for input'
+        };
+      case 'completed':
+        return {
+          icon: <CheckCircle size={14} className="status-icon" />,
+          color: 'completed',
+          text: 'Completed'
+        };
+      case 'processing':
+        return {
+          icon: <Loader size={14} className="status-icon spinning" />,
+          color: 'processing',
+          text: 'Processing'
+        };
+      case 'waiting_limited':
+      case 'waiting':
+        return {
+          icon: <MoreHorizontal size={14} className="status-icon pulsing-dots" />,
+          color: 'waiting',
+          text: 'Waiting'
+        };
       case 'running':
-        return 'running';
+        return {
+          icon: <CheckCircle size={14} className="status-icon" />,
+          color: 'running',
+          text: 'Running'
+        };
       case 'initializing':
-        return 'initializing';
+        return {
+          icon: <Loader size={14} className="status-icon spinning" />,
+          color: 'initializing',
+          text: 'Initializing'
+        };
       case 'stopped':
-        return 'stopped';
+        return {
+          icon: <div className="status-dot stopped"></div>,
+          color: 'stopped',
+          text: 'Stopped'
+        };
       case 'error':
-        return 'error';
+        return {
+          icon: <AlertCircle size={14} className="status-icon" />,
+          color: 'error',
+          text: 'Error'
+        };
       default:
-        return '';
+        return {
+          icon: <div className="status-dot"></div>,
+          color: '',
+          text: status
+        };
     }
   };
 
@@ -47,11 +95,17 @@ const SessionItem = ({ session, isActive, onClick }) => {
       )}
       
       <div className="session-status">
-        <span className={clsx('status-dot', getStatusColor(session.status))}></span>
-        {session.status}
-        {session.state && session.state !== session.status && (
-          <span>• {session.state}</span>
-        )}
+        {(() => {
+          const statusInfo = getStatusInfo(session.status, session.state);
+          return (
+            <>
+              <span className={clsx('status-indicator', statusInfo.color)}>
+                {statusInfo.icon}
+              </span>
+              <span className="status-text">{statusInfo.text}</span>
+            </>
+          );
+        })()}
       </div>
     </div>
   );

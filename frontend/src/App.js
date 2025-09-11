@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
+import Dashboard from './components/Dashboard';
 import CreateSessionModal from './components/CreateSessionModal';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useSessionManager } from './hooks/useSessionManager';
@@ -10,6 +11,7 @@ import './App.css';
 function App() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState(null);
+  const [currentView, setCurrentView] = useState('dashboard'); // 'dashboard' or 'session'
   
   const {
     sessions,
@@ -42,6 +44,12 @@ function App() {
 
   const handleSelectSession = (sessionId) => {
     setActiveSessionId(sessionId);
+    setCurrentView('session');
+  };
+
+  const handleViewDashboard = () => {
+    setCurrentView('dashboard');
+    setActiveSessionId(null);
   };
 
   const handleStopSession = async () => {
@@ -65,29 +73,46 @@ function App() {
 
   const activeSession = activeSessionId ? sessions.get(activeSessionId) : null;
 
+  const handleViewSession = () => {
+    if (activeSessionId) {
+      setCurrentView('session');
+    }
+  };
+
   return (
     <div className="app">
       <Header 
         sessionCount={sessions.size}
         isConnected={isConnected}
         onCreateSession={() => setShowCreateModal(true)}
+        currentView={currentView}
+        onViewDashboard={handleViewDashboard}
+        onViewSession={handleViewSession}
+        hasActiveSession={!!activeSessionId}
       />
       
-      <div className="app-main">
-        <Sidebar
+      {currentView === 'dashboard' ? (
+        <Dashboard 
           sessions={Array.from(sessions.values())}
-          activeSessionId={activeSessionId}
           onSelectSession={handleSelectSession}
-          onCreateSession={() => setShowCreateModal(true)}
         />
-        
-        <MainContent
-          activeSession={activeSession}
-          onExecuteCommand={handleExecuteCommand}
-          onStopSession={handleStopSession}
-          onClearSession={handleClearSession}
-        />
-      </div>
+      ) : (
+        <div className="app-main">
+          <Sidebar
+            sessions={Array.from(sessions.values())}
+            activeSessionId={activeSessionId}
+            onSelectSession={handleSelectSession}
+            onCreateSession={() => setShowCreateModal(true)}
+          />
+          
+          <MainContent
+            activeSession={activeSession}
+            onExecuteCommand={handleExecuteCommand}
+            onStopSession={handleStopSession}
+            onClearSession={handleClearSession}
+          />
+        </div>
+      )}
 
       {showCreateModal && (
         <CreateSessionModal

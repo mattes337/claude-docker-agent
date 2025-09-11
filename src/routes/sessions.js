@@ -90,9 +90,15 @@ module.exports = (sessionManager) => {
                     output = output.slice(-parseInt(lines));
                 }
                 
+                // Convert array of output objects to string for frontend
+                const outputString = Array.isArray(output) 
+                    ? output.map(item => item.data || item).join('')
+                    : output;
+                
                 res.json({
                     success: true,
-                    output,
+                    output: outputString,
+                    rawOutput: Array.isArray(output) ? output : null, // Keep raw for type info
                     totalLines: session.output.length
                 });
             } catch (error) {
@@ -110,6 +116,7 @@ module.exports = (sessionManager) => {
             body('name').optional().isString().trim().isLength({ min: 1, max: 100 }),
             body('repoUrl').optional().isURL().withMessage('Invalid repository URL'),
             body('branch').optional().isString().trim().isLength({ min: 1, max: 100 }),
+            body('newBranchName').optional().isString().trim().isLength({ min: 1, max: 100 }),
             body('memory').optional().isInt({ min: 128 * 1024 * 1024, max: 8 * 1024 * 1024 * 1024 }),
             body('cpuShares').optional().isInt({ min: 128, max: 4096 }),
             body('env').optional().isArray(),
@@ -122,6 +129,7 @@ module.exports = (sessionManager) => {
                     name: req.body.name,
                     repoUrl: req.body.repoUrl,
                     branch: req.body.branch || 'main',
+                    newBranchName: req.body.newBranchName,
                     memory: req.body.memory,
                     cpuShares: req.body.cpuShares,
                     env: req.body.env || [],

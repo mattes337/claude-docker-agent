@@ -166,13 +166,34 @@ export const useSessionManager = () => {
     setSessions(prev => {
       const newSessions = new Map(prev);
       const session = newSessions.get(sessionId);
+      
       if (session) {
-        session.output = (session.output || '') + output;
+        // Handle different output formats
+        let outputString = '';
+        if (typeof output === 'string') {
+          outputString = output;
+        } else if (output && typeof output === 'object') {
+          // Handle output objects with data/content properties
+          if (output.data !== undefined) {
+            outputString = String(output.data);
+          } else if (output.content !== undefined) {
+            outputString = String(output.content);
+          } else if (output.message !== undefined) {
+            outputString = String(output.message);
+          } else {
+            outputString = JSON.stringify(output);
+          }
+        } else {
+          outputString = String(output);
+        }
+        
+        session.output = (session.output || '') + outputString;
       } else {
         // Create session if it doesn't exist
+        const outputString = typeof output === 'string' ? output : (output?.data || String(output || ''));
         newSessions.set(sessionId, {
           id: sessionId,
-          output: output || ''
+          output: outputString
         });
       }
       return newSessions;

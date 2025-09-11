@@ -125,6 +125,54 @@
   margin-top: 8px;
 }
 
+.status-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-icon {
+  flex-shrink: 0;
+}
+
+.status-text {
+  font-weight: 500;
+}
+
+/* Status Colors */
+.status-indicator.waiting-input {
+  color: #f59e0b;
+}
+
+.status-indicator.completed {
+  color: #10b981;
+}
+
+.status-indicator.processing {
+  color: #3b82f6;
+}
+
+.status-indicator.waiting {
+  color: #6b7280;
+}
+
+.status-indicator.running {
+  color: #10b981;
+}
+
+.status-indicator.initializing {
+  color: #3b82f6;
+}
+
+.status-indicator.stopped {
+  color: #6b7280;
+}
+
+.status-indicator.error {
+  color: #ef4444;
+}
+
+/* Legacy status dots for fallback */
 .status-dot {
   width: 8px;
   height: 8px;
@@ -150,6 +198,34 @@
 
 .status-dot.error {
   background: #dc3545;
+}
+
+/* Animations */
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+.pulsing {
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+.pulsing-dots {
+  animation: pulse-dots 2s ease-in-out infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes pulse-dots {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 /* Responsive design */

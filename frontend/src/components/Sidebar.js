@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, GitBranch, Github } from 'lucide-react';
+import { Plus, Github } from 'lucide-react';
 import SessionItem from './SessionItem';
 import './Sidebar.css';
 

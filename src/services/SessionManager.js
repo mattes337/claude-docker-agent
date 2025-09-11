@@ -25,6 +25,8 @@ class SessionManager extends EventEmitter {
             name: config.name || `Session ${sessionId.slice(0, 8)}`,
             repoUrl: config.repoUrl,
             branch: config.branch || 'main',
+            newBranchName: config.newBranchName,
+            currentBranch: config.newBranchName || config.branch || 'main',
             workDir,
             status: 'initializing',
             state: 'idle',
@@ -58,6 +60,11 @@ class SessionManager extends EventEmitter {
             // Clone repository if provided
             if (config.repoUrl) {
                 await this.cloneRepository(session);
+                
+                // Create new branch if specified
+                if (config.newBranchName) {
+                    await this.createNewBranch(session);
+                }
             }
             
             // Create and start container
@@ -146,6 +153,55 @@ class SessionManager extends EventEmitter {
         } catch (error) {
             this.addOutput(id, `❌ Clone failed: ${error.message}\n`, 'error');
             throw new Error(`Failed to clone repository: ${error.message}`);
+        }
+    }
+
+    async createNewBranch(session) {
+        const { newBranchName, branch, workDir, id } = session;
+        
+        this.addOutput(id, `🌿 Creating new branch: ${newBranchName}\n`, 'git');
+        
+        try {
+            // Create and checkout new branch from base branch
+            const checkoutProcess = spawn('git', [
+                'checkout', '-b', newBranchName, branch
+            ], {
+                cwd: workDir,
+                stdio: ['pipe', 'pipe', 'pipe']
+            });
+
+            let output = '';
+            let errorOutput = '';
+
+            checkoutProcess.stdout.on('data', (data) => {
+                output += data.toString();
+                this.addOutput(id, data.toString(), 'git');
+            });
+
+            checkoutProcess.stderr.on('data', (data) => {
+                errorOutput += data.toString();
+                this.addOutput(id, data.toString(), 'git');
+            });
+
+            await new Promise((resolve, reject) => {
+                checkoutProcess.on('close', (code) => {
+                    if (code === 0) {
+                        this.addOutput(id, `✅ New branch '${newBranchName}' created and checked out\n`, 'success');
+                        session.currentBranch = newBranchName;
+                        resolve();
+                    } else {
+                        reject(new Error(`Git checkout failed with code ${code}: ${errorOutput}`));
+                    }
+                });
+
+                checkoutProcess.on('error', (error) => {
+                    reject(new Error(`Git checkout error: ${error.message}`));
+                });
+            });
+
+        } catch (error) {
+            this.addOutput(id, `❌ Branch creation failed: ${error.message}\n`, 'error');
+            throw new Error(`Failed to create new branch: ${error.message}`);
         }
     }
 
@@ -244,26 +300,39 @@ class SessionManager extends EventEmitter {
                 { interactive: true, tty: true }
             );
 
-            // Handle output
-            stream.on('data', (chunk) => {
-                const data = chunk.toString();
-                this.addOutput(sessionId, data, 'claude');
-                
-                // Try to extract conversation ID
-                const idMatch = data.match(/conversation_id:\s*([a-zA-Z0-9-]+)/);
-                if (idMatch) {
-                    session.conversationId = idMatch[1];
-                }
-            });
+            // Handle output and wait for completion
+            await new Promise((resolve, reject) => {
+                stream.on('data', (chunk) => {
+                    const data = chunk.toString();
+                    this.addOutput(sessionId, data, 'claude');
+                    
+                    // Try to extract conversation ID
+                    const idMatch = data.match(/conversation_id:\s*([a-zA-Z0-9-]+)/);
+                    if (idMatch) {
+                        session.conversationId = idMatch[1];
+                    }
+                });
 
-            // Wait for completion
-            const result = await exec.inspect();
-            
-            if (result.ExitCode === 0) {
-                this.addOutput(sessionId, '\n✅ Request completed\n', 'success');
-            } else {
-                throw new Error(`Claude exited with code ${result.ExitCode}`);
-            }
+                stream.on('end', async () => {
+                    try {
+                        // Wait for execution to complete and get exit code
+                        const result = await exec.inspect();
+                        
+                        if (result.ExitCode === 0) {
+                            this.addOutput(sessionId, '\n✅ Request completed\n', 'success');
+                            resolve();
+                        } else {
+                            reject(new Error(`Claude exited with code ${result.ExitCode}`));
+                        }
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+
+                stream.on('error', (error) => {
+                    reject(error);
+                });
+            });
 
             session.state = 'waiting_input';
             
@@ -381,6 +450,8 @@ class SessionManager extends EventEmitter {
             name: session.name,
             repoUrl: session.repoUrl,
             branch: session.branch,
+            newBranchName: session.newBranchName,
+            currentBranch: session.currentBranch,
             status: session.status,
             state: session.state,
             workDir: session.workDir,

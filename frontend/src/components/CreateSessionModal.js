@@ -6,7 +6,8 @@ const CreateSessionModal = ({ onClose, onCreateSession }) => {
   const [formData, setFormData] = useState({
     name: '',
     repoUrl: '',
-    branch: 'main'
+    branch: 'main',
+    newBranchName: ''
   });
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState('');
@@ -25,7 +26,8 @@ const CreateSessionModal = ({ onClose, onCreateSession }) => {
       const result = await onCreateSession({
         name: formData.name.trim(),
         repoUrl: formData.repoUrl.trim() || undefined,
-        branch: formData.branch.trim() || 'main'
+        branch: formData.branch.trim() || 'main',
+        newBranchName: formData.newBranchName.trim() || undefined
       });
 
       if (!result.success) {
@@ -94,7 +96,7 @@ const CreateSessionModal = ({ onClose, onCreateSession }) => {
           <div className="form-group">
             <label htmlFor="branch">
               <GitBranch size={16} />
-              Branch
+              Base Branch
             </label>
             <input
               id="branch"
@@ -103,6 +105,23 @@ const CreateSessionModal = ({ onClose, onCreateSession }) => {
               onChange={(e) => handleChange('branch', e.target.value)}
               placeholder="main"
             />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="newBranchName">
+              <GitBranch size={16} />
+              New Branch Name (optional)
+            </label>
+            <input
+              id="newBranchName"
+              type="text"
+              value={formData.newBranchName}
+              onChange={(e) => handleChange('newBranchName', e.target.value)}
+              placeholder="feature/my-changes"
+            />
+            <small className="form-help">
+              Create and checkout a new branch from the base branch
+            </small>
           </div>
 
           {error && (

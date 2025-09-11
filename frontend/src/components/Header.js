@@ -1,7 +1,7 @@
 import React from 'react';
-import { Bot, Plus, Wifi, WifiOff } from 'lucide-react';
+import { Bot, Plus, Wifi, WifiOff, LayoutDashboard, Terminal } from 'lucide-react';
 
-const Header = ({ sessionCount, isConnected, onCreateSession }) => {
+const Header = ({ sessionCount, isConnected, onCreateSession, currentView, onViewDashboard, onViewSession, hasActiveSession }) => {
   return (
     <header className="header">
       <div className="header-content">
@@ -18,6 +18,27 @@ const Header = ({ sessionCount, isConnected, onCreateSession }) => {
       </div>
       
       <div className="header-actions">
+        <div className="view-navigation">
+          <button 
+            className={`nav-btn ${currentView === 'dashboard' ? 'active' : ''}`}
+            onClick={onViewDashboard}
+            title="Dashboard"
+          >
+            <LayoutDashboard size={16} />
+            Dashboard
+          </button>
+          {hasActiveSession && (
+            <button 
+              className={`nav-btn ${currentView === 'session' ? 'active' : ''}`}
+              onClick={onViewSession}
+              title="Session View"
+            >
+              <Terminal size={16} />
+              Session
+            </button>
+          )}
+        </div>
+
         <div className="connection-status">
           {isConnected ? (
             <>

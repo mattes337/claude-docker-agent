@@ -72,7 +72,6 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
         break;
       
       case 'output':
-        console.log('Output received:', data);
         appendSessionOutput(data.sessionId, data.output);
         break;
       
@@ -94,9 +93,21 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
         break;
       
       case 'output_history':
-        console.log('Output history received:', data);
         if (data.sessionId && data.output !== undefined) {
-          updateSession(data.sessionId, { output: data.output });
+          // Convert array output to string
+          let outputString = '';
+          if (Array.isArray(data.output)) {
+            outputString = data.output.map(item => {
+              if (typeof item === 'string') return item;
+              if (typeof item === 'object' && item !== null) {
+                return item.data || item.content || item.message || '';
+              }
+              return String(item);
+            }).join('');
+          } else {
+            outputString = String(data.output || '');
+          }
+          updateSession(data.sessionId, { output: outputString });
         }
         break;
       
