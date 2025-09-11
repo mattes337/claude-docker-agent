@@ -29,7 +29,7 @@ A multi-session Docker container management system for Claude Code that enables 
 
 - Docker Engine 20.10+
 - Node.js 18+
-- Claude API key
+- Claude Code CLI (with subscription authentication - run `claude auth` to set up)
 - Git (for repository cloning)
 - Sufficient disk space for workspaces
 
@@ -48,9 +48,9 @@ cd claude-docker-agent
 cp .env.example .env
 ```
 
-3. Edit `.env` file and set your Claude API key:
+3. Ensure Claude Code CLI is authenticated:
 ```bash
-CLAUDE_API_KEY=your_claude_api_key_here
+claude auth
 ```
 
 4. Build and start the services:
@@ -77,13 +77,17 @@ npm run build:frontend
 docker build -f Dockerfile.session -t claude-session:latest .
 ```
 
-4. Set environment variables:
+4. Ensure Claude Code CLI is authenticated:
 ```bash
-export CLAUDE_API_KEY=your_claude_api_key_here
+claude auth
+```
+
+5. Set environment variables:
+```bash
 export WORKSPACES_DIR=./workspaces
 ```
 
-5. Start the application:
+6. Start the application:
 ```bash
 npm start
 ```
@@ -136,7 +140,6 @@ curl -X POST http://localhost:3000/api/sessions/{id}/execute \
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CLAUDE_API_KEY` | Claude API key (required) | - |
 | `PORT` | Server port | 3000 |
 | `WORKSPACES_DIR` | Directory for session workspaces | ./workspaces |
 | `CLAUDE_BASE_IMAGE` | Docker image for sessions | claude-session:latest |

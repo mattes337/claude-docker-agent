@@ -17,10 +17,12 @@ function App() {
     stopSession,
     executeCommand,
     clearSession,
-    loadSessions
+    loadSessions,
+    updateSession,
+    appendSessionOutput
   } = useSessionManager();
   
-  const { isConnected } = useWebSocket(sessions, activeSessionId);
+  const { isConnected } = useWebSocket(sessions, activeSessionId, updateSession, appendSessionOutput);
 
   useEffect(() => {
     loadSessions();

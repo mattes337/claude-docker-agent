@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 
-export const useWebSocket = (sessions, activeSessionId) => {
+export const useWebSocket = (sessions, activeSessionId, updateSession, appendSessionOutput) => {
   const [isConnected, setIsConnected] = useState(false);
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -30,7 +30,7 @@ export const useWebSocket = (sessions, activeSessionId) => {
       wsRef.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          handleWebSocketMessage(data, sessions);
+          handleWebSocketMessage(data, updateSession, appendSessionOutput);
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
         }
@@ -60,7 +60,7 @@ export const useWebSocket = (sessions, activeSessionId) => {
     }
   };
 
-  const handleWebSocketMessage = (data, sessions) => {
+  const handleWebSocketMessage = (data, updateSession, appendSessionOutput) => {
     switch (data.type) {
       case 'session_created':
         console.log('Session created:', data.session);
@@ -68,34 +68,35 @@ export const useWebSocket = (sessions, activeSessionId) => {
       
       case 'session_ready':
         console.log('Session ready:', data.sessionId);
-        const readySession = sessions.get(data.sessionId);
-        if (readySession) {
-          readySession.status = 'running';
-          readySession.state = 'ready';
-        }
+        updateSession(data.sessionId, { status: 'running', state: 'ready' });
         break;
       
       case 'output':
-        const outputSession = sessions.get(data.sessionId);
-        if (outputSession) {
-          outputSession.output = (outputSession.output || '') + data.output;
-        }
+        console.log('Output received:', data);
+        appendSessionOutput(data.sessionId, data.output);
         break;
       
       case 'session_stopped':
         console.log('Session stopped:', data.sessionId);
-        const stoppedSession = sessions.get(data.sessionId);
-        if (stoppedSession) {
-          stoppedSession.status = 'stopped';
-          stoppedSession.state = 'stopped';
-        }
+        updateSession(data.sessionId, { status: 'stopped', state: 'stopped' });
         break;
       
       case 'resume_scheduled':
         console.log('Resume scheduled for session:', data.sessionId);
-        const resumeSession = sessions.get(data.sessionId);
-        if (resumeSession) {
-          resumeSession.state = 'waiting_for_resume';
+        updateSession(data.sessionId, { state: 'waiting_for_resume' });
+        break;
+      
+      case 'session_info':
+        console.log('Session info received:', data);
+        if (data.session) {
+          updateSession(data.session.id, data.session);
+        }
+        break;
+      
+      case 'output_history':
+        console.log('Output history received:', data);
+        if (data.sessionId && data.output !== undefined) {
+          updateSession(data.sessionId, { output: data.output });
         }
         break;
       

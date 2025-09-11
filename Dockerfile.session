@@ -16,7 +16,7 @@ RUN apk add --no-cache \
     wget
 
 # Install minimal Python packages
-RUN pip3 install --no-cache-dir \
+RUN pip3 install --no-cache-dir --break-system-packages \
     requests \
     flask \
     fastapi
@@ -25,6 +25,9 @@ RUN pip3 install --no-cache-dir \
 RUN npm install -g \
     typescript \
     ts-node
+
+# Install Claude CLI properly
+RUN npm install -g @anthropic-ai/claude-code
 
 # Create workspace and user
 RUN mkdir -p /workspace \

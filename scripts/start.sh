@@ -16,7 +16,7 @@ fi
 if [ ! -f .env ]; then
     echo "⚠️  .env file not found. Creating from template..."
     cp .env.example .env
-    echo "📝 Please edit .env file and set your CLAUDE_API_KEY"
+    echo "📝 Please ensure Claude Code is authenticated (run 'claude auth' if needed)"
     echo "   Then run this script again."
     exit 1
 fi
@@ -24,10 +24,10 @@ fi
 # Source environment variables
 source .env
 
-# Check if Claude API key is set
-if [ -z "$CLAUDE_API_KEY" ] || [ "$CLAUDE_API_KEY" = "your_claude_api_key_here" ]; then
-    echo "❌ CLAUDE_API_KEY is not set in .env file"
-    echo "   Please set your Claude API key and try again."
+# Check if Claude Code is authenticated
+if [ ! -f ~/.claude/.credentials.json ]; then
+    echo "❌ Claude Code is not authenticated"
+    echo "   Please run 'claude auth' to authenticate with your Claude subscription."
     exit 1
 fi
 

@@ -89,10 +89,12 @@ class WebSocketService {
         });
 
         this.sessionManager.on('sessionOutput', (sessionId, output) => {
+            // Extract data from output object if needed
+            const outputData = typeof output === 'object' && output.data ? output.data : output;
             this.broadcast(sessionId, {
                 type: 'output',
                 sessionId,
-                output
+                output: outputData
             });
         });
 

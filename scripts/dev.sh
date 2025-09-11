@@ -16,7 +16,7 @@ fi
 if [ ! -f .env ]; then
     echo "⚠️  .env file not found. Creating from template..."
     cp .env.example .env
-    echo "📝 Please edit .env file and set your CLAUDE_API_KEY"
+    echo "📝 Please ensure Claude Code is authenticated (run 'claude auth' if needed)"
     echo "   Then run this script again."
     exit 1
 fi

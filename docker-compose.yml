@@ -14,11 +14,11 @@ services:
       - DOCKER_NETWORK=claude-network
       - CLEANUP_WORKSPACES=false
       - CORS_ORIGIN=*
-      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - workspaces:/app/workspaces
       - ./logs:/app/logs
+      - ~/.claude:/root/.claude:ro
     networks:
       - claude-network
     restart: unless-stopped

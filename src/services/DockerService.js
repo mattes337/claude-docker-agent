@@ -301,7 +301,9 @@ class DockerService {
                 AttachStdout: true,
                 AttachStderr: true,
                 AttachStdin: options.interactive || false,
-                Tty: options.tty || false
+                Tty: options.tty || false,
+                WorkingDir: options.workingDir || '/workspace',
+                User: options.user || undefined
             });
 
             const stream = await exec.start({

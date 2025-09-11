@@ -39,8 +39,56 @@ const Terminal = ({ session, onExecuteCommand }) => {
     }
   };
 
-  const formatOutput = (output) => {
+  const formatOutput = (output, rawOutput) => {
+    // If we have raw output (array format), use it for better type detection
+    if (rawOutput && Array.isArray(rawOutput)) {
+      return rawOutput.map((item, index) => {
+        const content = item.data || '';
+        const backendType = item.type || 'output';
+        
+        // Map backend types to display types
+        let displayType = 'output';
+        if (backendType === 'system') displayType = 'system';
+        else if (backendType === 'git') displayType = 'git';
+        else if (backendType === 'error') displayType = 'error';
+        else if (backendType === 'success') displayType = 'success';
+        else if (backendType === 'claude') displayType = 'claude';
+        else if (backendType === 'user') displayType = 'command';
+        else if (content.includes('Error:') || content.includes('error:')) displayType = 'error';
+        else if (content.includes('Warning:') || content.includes('warning:')) displayType = 'warning';
+        else if (content.includes('Success:') || content.includes('✓')) displayType = 'success';
+        
+        return { type: displayType, content: content.trim(), key: index };
+      }).filter(line => line.content.length > 0); // Filter out empty lines
+    }
+    
+    // Fallback to string processing
     if (!output) return [];
+    
+    // If output is an array (from WebSocket), convert to string first
+    if (Array.isArray(output)) {
+      const outputString = output.map(item => {
+        if (typeof item === 'string') return item;
+        if (typeof item === 'object' && item !== null) {
+          return item.data || item.content || item.message || '';
+        }
+        return String(item);
+      }).join('');
+      return outputString.split('\n').map((line, index) => {
+        // Detect different types of output
+        if (line.startsWith('$ ') || line.startsWith('> ')) {
+          return { type: 'command', content: line, key: index };
+        } else if (line.includes('Error:') || line.includes('error:')) {
+          return { type: 'error', content: line, key: index };
+        } else if (line.includes('Warning:') || line.includes('warning:')) {
+          return { type: 'warning', content: line, key: index };
+        } else if (line.includes('Success:') || line.includes('✓')) {
+          return { type: 'success', content: line, key: index };
+        } else {
+          return { type: 'output', content: line, key: index };
+        }
+      }).filter(line => line.content.trim().length > 0);
+    }
     
     return output.split('\n').map((line, index) => {
       // Detect different types of output
@@ -55,10 +103,10 @@ const Terminal = ({ session, onExecuteCommand }) => {
       } else {
         return { type: 'output', content: line, key: index };
       }
-    });
+    }).filter(line => line.content.trim().length > 0);
   };
 
-  const outputLines = formatOutput(session.output);
+  const outputLines = formatOutput(session.output, session.rawOutput);
 
   return (
     <div className="terminal">

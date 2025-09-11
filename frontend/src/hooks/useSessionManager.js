@@ -26,6 +26,29 @@ export const useSessionManager = () => {
     }
   };
 
+  const getSessionOutput = useCallback(async (sessionId) => {
+    const result = await apiCall(`/sessions/${sessionId}/output`);
+    
+    if (result.success) {
+      setSessions(prev => {
+        const newSessions = new Map(prev);
+        const session = newSessions.get(sessionId);
+        if (session) {
+          // Handle both array and string formats
+          if (Array.isArray(result.output)) {
+            session.output = result.output.map(item => item.data || item).join('');
+            session.rawOutput = result.output; // Keep raw array for type information
+          } else {
+            session.output = result.output || '';
+          }
+        }
+        return newSessions;
+      });
+    }
+
+    return result;
+  }, []);
+
   const loadSessions = useCallback(async () => {
     const result = await apiCall('/sessions');
     if (result.success) {
@@ -37,9 +60,14 @@ export const useSessionManager = () => {
         });
       });
       setSessions(sessionMap);
+      
+      // Load full output for each session
+      result.sessions.forEach(async (session) => {
+        await getSessionOutput(session.id);
+      });
     }
     return result;
-  }, []);
+  }, [getSessionOutput]);
 
   const createSession = useCallback(async (sessionData) => {
     const result = await apiCall('/sessions', {
@@ -116,21 +144,39 @@ export const useSessionManager = () => {
     return { success: true };
   }, []);
 
-  const getSessionOutput = useCallback(async (sessionId) => {
-    const result = await apiCall(`/sessions/${sessionId}/output`);
-    
-    if (result.success) {
-      setSessions(prev => {
-        const newSessions = new Map(prev);
-        const session = newSessions.get(sessionId);
-        if (session) {
-          session.output = result.output || '';
-        }
-        return newSessions;
-      });
-    }
+  const updateSession = useCallback((sessionId, updates) => {
+    setSessions(prev => {
+      const newSessions = new Map(prev);
+      const session = newSessions.get(sessionId);
+      if (session) {
+        Object.assign(session, updates);
+      } else if (updates && Object.keys(updates).length > 0) {
+        // Create session if it doesn't exist and we have updates
+        newSessions.set(sessionId, {
+          id: sessionId,
+          output: '',
+          ...updates
+        });
+      }
+      return newSessions;
+    });
+  }, []);
 
-    return result;
+  const appendSessionOutput = useCallback((sessionId, output) => {
+    setSessions(prev => {
+      const newSessions = new Map(prev);
+      const session = newSessions.get(sessionId);
+      if (session) {
+        session.output = (session.output || '') + output;
+      } else {
+        // Create session if it doesn't exist
+        newSessions.set(sessionId, {
+          id: sessionId,
+          output: output || ''
+        });
+      }
+      return newSessions;
+    });
   }, []);
 
   return {
@@ -140,6 +186,8 @@ export const useSessionManager = () => {
     stopSession,
     executeCommand,
     clearSession,
-    getSessionOutput
+    getSessionOutput,
+    updateSession,
+    appendSessionOutput
   };
 };

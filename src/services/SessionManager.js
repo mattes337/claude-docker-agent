@@ -9,7 +9,7 @@ class SessionManager extends EventEmitter {
         super();
         this.dockerService = dockerService;
         this.sessions = new Map();
-        this.workspacesDir = process.env.WORKSPACES_DIR || path.join(__dirname, '../../workspaces');
+        this.workspacesDir = path.resolve(process.env.WORKSPACES_DIR || path.join(__dirname, '../../workspaces'));
         this.autoResumeManager = new AutoResumeManager(this);
         
         // Ensure workspaces directory exists
@@ -155,7 +155,10 @@ class SessionManager extends EventEmitter {
             
             const containerConfig = {
                 ...session.config,
-                binds: [`${session.workDir}:/workspace`],
+                binds: [
+                    `${session.workDir}:/workspace`,
+                    `${process.env.HOME}/.claude:/home/claude/.claude`
+                ],
                 cmd: ['bash', '-l']
             };
 
@@ -165,6 +168,20 @@ class SessionManager extends EventEmitter {
             session.container = container;
             
             this.addOutput(session.id, '✅ Container created and started\n', 'success');
+            
+            // Fix permissions for Claude CLI directory
+            try {
+                const { exec } = await this.dockerService.execCommand(
+                    session.id,
+                    ['chown', '-R', 'claude:claude', '/home/claude/.claude'],
+                    { user: 'root' }
+                );
+                await exec.inspect();
+                this.addOutput(session.id, '✅ Claude CLI permissions fixed\n', 'success');
+            } catch (error) {
+                console.warn('Failed to fix Claude CLI permissions:', error.message);
+                this.addOutput(session.id, '⚠️ Warning: Claude CLI permissions not fixed\n', 'warning');
+            }
             
         } catch (error) {
             throw new Error(`Failed to create container: ${error.message}`);
@@ -210,10 +227,10 @@ class SessionManager extends EventEmitter {
             // Execute Claude command in container
             const claudeArgs = [
                 'claude',
-                '-p', prompt,
-                '--cwd', '/workspace',
+                '--print',
                 '--dangerously-skip-permissions',
                 '--output-format', options.outputFormat || 'text',
+                prompt,
                 ...session.config.claudeArgs
             ];
 
