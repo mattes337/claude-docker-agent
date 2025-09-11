@@ -81,7 +81,13 @@
   margin: 0;
 }
 
-.view-logs-btn {
+.session-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.view-logs-btn,
+.delete-session-btn {
   background: transparent;
   border: none;
   color: #94a3b8;
@@ -93,6 +99,11 @@
 
 .view-logs-btn:hover {
   color: #f8fafc;
+  background: #2a2a3e;
+}
+
+.delete-session-btn:hover {
+  color: #ef4444;
   background: #2a2a3e;
 }
 

@@ -1,9 +1,9 @@
 import React from 'react';
-import { CheckCircle, AlertCircle, Loader, MoreHorizontal, Eye } from 'lucide-react';
+import { CheckCircle, AlertCircle, Loader, MoreHorizontal, Eye, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 import './Dashboard.css';
 
-const Dashboard = ({ sessions, onSelectSession }) => {
+const Dashboard = ({ sessions, onSelectSession, onDeleteSession }) => {
   const getStatusInfo = (status, state) => {
     const currentState = state || status;
     
@@ -126,9 +126,25 @@ const Dashboard = ({ sessions, onSelectSession }) => {
             >
               <div className="session-card-header">
                 <h4 className="session-card-name">{session.name}</h4>
-                <button className="view-logs-btn" title="View Logs">
-                  <Eye size={14} />
-                </button>
+                <div className="session-card-actions">
+                  <button className="view-logs-btn" title="View Logs">
+                    <Eye size={14} />
+                  </button>
+                  {onDeleteSession && (
+                    <button 
+                      className="delete-session-btn" 
+                      title="Delete Session"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`Are you sure you want to delete session "${session.name}"? This will force delete the session regardless of its status.`)) {
+                          onDeleteSession(session.id);
+                        }
+                      }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="progress-circle-container">

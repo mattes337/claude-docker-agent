@@ -72,7 +72,10 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
         break;
       
       case 'output':
-        appendSessionOutput(data.sessionId, data.output);
+        // Handle real-time output streaming
+        if (data.sessionId && data.output) {
+          appendSessionOutput(data.sessionId, data.output, data.rawOutput);
+        }
         break;
       
       case 'session_stopped':

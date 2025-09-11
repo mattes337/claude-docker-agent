@@ -80,6 +80,35 @@ function App() {
     }
   };
 
+  const handleDeleteSession = async (sessionId) => {
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        // Remove session from local state
+        const newSessions = new Map(sessions);
+        newSessions.delete(sessionId);
+        
+        // If deleted session was active, clear active session
+        if (activeSessionId === sessionId) {
+          setActiveSessionId(null);
+          setCurrentView('dashboard');
+        }
+        
+        // Reload sessions to get updated state
+        loadSessions();
+      } else {
+        const result = await response.json();
+        alert('Failed to delete session: ' + (result.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+      alert('Failed to delete session: ' + error.message);
+    }
+  };
+
   const activeSession = activeSessionId ? sessions.get(activeSessionId) : null;
 
   const handleViewSession = () => {
@@ -105,6 +134,7 @@ function App() {
         <Dashboard 
           sessions={Array.from(sessions.values())}
           onSelectSession={handleSelectSession}
+          onDeleteSession={handleDeleteSession}
         />
       ) : currentView === 'containers' ? (
         <Containers 
@@ -118,6 +148,7 @@ function App() {
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
             onCreateSession={() => setShowCreateModal(true)}
+            onDeleteSession={handleDeleteSession}
           />
           
           <MainContent

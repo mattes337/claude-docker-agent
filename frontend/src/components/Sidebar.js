@@ -3,7 +3,7 @@ import { Plus, Github } from 'lucide-react';
 import SessionItem from './SessionItem';
 import './Sidebar.css';
 
-const Sidebar = ({ sessions, activeSessionId, onSelectSession, onCreateSession }) => {
+const Sidebar = ({ sessions, activeSessionId, onSelectSession, onCreateSession, onDeleteSession }) => {
   return (
     <div className="sidebar">
       <div className="sidebar-header">
@@ -27,6 +27,7 @@ const Sidebar = ({ sessions, activeSessionId, onSelectSession, onCreateSession }
               session={session}
               isActive={session.id === activeSessionId}
               onClick={() => onSelectSession(session.id)}
+              onDelete={onDeleteSession}
             />
           ))
         )}

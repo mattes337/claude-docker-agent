@@ -162,7 +162,7 @@ export const useSessionManager = () => {
     });
   }, []);
 
-  const appendSessionOutput = useCallback((sessionId, output) => {
+  const appendSessionOutput = useCallback((sessionId, output, rawOutput) => {
     setSessions(prev => {
       const newSessions = new Map(prev);
       const session = newSessions.get(sessionId);
@@ -188,12 +188,23 @@ export const useSessionManager = () => {
         }
         
         session.output = (session.output || '') + outputString;
+        
+        // Update raw output array for better formatting
+        if (rawOutput) {
+          if (!session.rawOutput) {
+            session.rawOutput = [];
+          }
+          if (Array.isArray(session.rawOutput)) {
+            session.rawOutput.push(rawOutput);
+          }
+        }
       } else {
         // Create session if it doesn't exist
         const outputString = typeof output === 'string' ? output : (output?.data || String(output || ''));
         newSessions.set(sessionId, {
           id: sessionId,
-          output: outputString
+          output: outputString,
+          rawOutput: rawOutput ? [rawOutput] : []
         });
       }
       return newSessions;

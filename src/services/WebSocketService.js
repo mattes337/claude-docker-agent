@@ -91,10 +91,13 @@ class WebSocketService {
         this.sessionManager.on('sessionOutput', (sessionId, output) => {
             // Extract data from output object if needed
             const outputData = typeof output === 'object' && output.data ? output.data : output;
+            
+            // Broadcast to subscribers immediately for real-time streaming
             this.broadcast(sessionId, {
                 type: 'output',
                 sessionId,
-                output: outputData
+                output: outputData,
+                rawOutput: output
             });
         });
 

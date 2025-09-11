@@ -369,7 +369,7 @@ class SessionManager extends EventEmitter {
             this.addOutput(sessionId, `\n👤 You: ${prompt}\n\n`, 'user');
             this.addOutput(sessionId, '🔄 Processing with Claude Code...\n', 'system');
 
-            // Execute Claude command in container
+            // Execute Claude command in container with output redirection for docker logs
             const claudeArgs = [
                 'claude',
                 '--print',
@@ -383,27 +383,66 @@ class SessionManager extends EventEmitter {
                 claudeArgs.push('--resume', session.conversationId);
             }
 
+            // Wrap the command to ensure output goes to both exec stream and container logs
+            const wrappedCommand = [
+                'bash', '-c',
+                `${claudeArgs.join(' ')} 2>&1 | tee /proc/1/fd/1`
+            ];
+
             const { exec, stream } = await this.dockerService.execCommand(
                 sessionId, 
-                claudeArgs,
-                { interactive: true, tty: true }
+                wrappedCommand,
+                { interactive: false, tty: false }
             );
 
-            // Handle output and wait for completion
+            // Handle output and wait for completion with proper encoding
             await new Promise((resolve, reject) => {
+                let buffer = Buffer.alloc(0);
+                
                 stream.on('data', (chunk) => {
-                    const data = chunk.toString();
-                    this.addOutput(sessionId, data, 'claude');
+                    // Properly handle Docker stream header format
+                    let data;
+                    if (chunk.length >= 8) {
+                        // Docker multiplexed stream format: 8-byte header + payload
+                        // Header format: [stream_type][0][0][0][size_byte_3][size_byte_2][size_byte_1][size_byte_0]
+                        const streamType = chunk[0];
+                        const payloadSize = chunk.readUInt32BE(4);
+                        
+                        if (chunk.length >= 8 + payloadSize) {
+                            // Extract payload and decode as UTF-8
+                            const payload = chunk.slice(8, 8 + payloadSize);
+                            data = payload.toString('utf8');
+                        } else {
+                            // Fallback for incomplete chunks
+                            data = chunk.slice(8).toString('utf8');
+                        }
+                    } else {
+                        // Fallback for non-multiplexed streams
+                        data = chunk.toString('utf8');
+                    }
                     
-                    // Try to extract conversation ID
-                    const idMatch = data.match(/conversation_id:\s*([a-zA-Z0-9-]+)/);
-                    if (idMatch) {
-                        session.conversationId = idMatch[1];
+                    // Clean up any remaining control characters
+                    data = data.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+                    
+                    if (data.trim()) {
+                        // Process data and add to output with real-time streaming
+                        this.addOutput(sessionId, data, 'claude');
+                        
+                        // Write to process stdout for logging
+                        process.stdout.write(`[Session ${sessionId}] ${data}`);
+                        
+                        // Try to extract conversation ID
+                        const idMatch = data.match(/conversation_id:\s*([a-zA-Z0-9-]+)/);
+                        if (idMatch) {
+                            session.conversationId = idMatch[1];
+                        }
                     }
                 });
 
                 stream.on('end', async () => {
                     try {
+                        console.log(`[Session ${sessionId}] Command completed`);
+                        
                         // Wait for execution to complete and get exit code
                         const result = await exec.inspect();
                         

@@ -137,6 +137,13 @@ class DockerService {
                     AutoRemove: false,
                     RestartPolicy: {
                         Name: 'no'
+                    },
+                    LogConfig: {
+                        Type: 'json-file',
+                        Config: {
+                            'max-size': '100m',
+                            'max-file': '3'
+                        }
                     }
                 },
                 NetworkingConfig: {
@@ -308,12 +315,35 @@ class DockerService {
 
             const stream = await exec.start({
                 hijack: options.interactive || false,
-                stdin: options.interactive || false
+                stdin: options.interactive || false,
+                Detach: false
             });
 
             return { exec, stream };
         } catch (error) {
             throw new Error(`Failed to execute command: ${error.message}`);
+        }
+    }
+
+    async getContainerLogs(sessionId, options = {}) {
+        const container = this.containers.get(sessionId);
+        if (!container) {
+            throw new Error(`Container not found for session ${sessionId}`);
+        }
+
+        try {
+            const logStream = await container.logs({
+                stdout: true,
+                stderr: true,
+                follow: options.follow || false,
+                tail: options.tail || 100,
+                since: options.since || undefined,
+                timestamps: options.timestamps || false
+            });
+
+            return logStream;
+        } catch (error) {
+            throw new Error(`Failed to get container logs: ${error.message}`);
         }
     }
 

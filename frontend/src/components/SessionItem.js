@@ -1,8 +1,8 @@
 import React from 'react';
-import { Github, GitBranch, CheckCircle, AlertCircle, Loader, MoreHorizontal } from 'lucide-react';
+import { Github, GitBranch, CheckCircle, AlertCircle, Loader, MoreHorizontal, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 
-const SessionItem = ({ session, isActive, onClick }) => {
+const SessionItem = ({ session, isActive, onClick, onDelete }) => {
   const getRepoName = (repoUrl) => {
     if (!repoUrl) return 'No Repository';
     return repoUrl.split('/').pop().replace('.git', '');
@@ -107,6 +107,21 @@ const SessionItem = ({ session, isActive, onClick }) => {
           );
         })()}
       </div>
+      
+      {onDelete && (
+        <button 
+          className="session-delete-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (window.confirm(`Are you sure you want to delete session "${session.name}"? This will force delete the session regardless of its status.`)) {
+              onDelete(session.id);
+            }
+          }}
+          title="Force delete session"
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
     </div>
   );
 };

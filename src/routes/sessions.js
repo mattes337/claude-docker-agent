@@ -186,6 +186,81 @@ module.exports = (sessionManager) => {
         }
     );
 
+    // Get Docker container logs for session
+    router.get('/:id/logs',
+        param('id').isUUID().withMessage('Invalid session ID'),
+        handleValidationErrors,
+        async (req, res) => {
+            try {
+                const session = sessionManager.getSession(req.params.id);
+                
+                if (!session) {
+                    return res.status(404).json({
+                        success: false,
+                        error: 'Session not found'
+                    });
+                }
+                
+                const { follow, tail = 100, since, timestamps } = req.query;
+                
+                if (follow === 'true') {
+                    // For streaming logs, set appropriate headers
+                    res.setHeader('Content-Type', 'text/plain');
+                    res.setHeader('Cache-Control', 'no-cache');
+                    res.setHeader('Connection', 'keep-alive');
+                    
+                    const logStream = await sessionManager.dockerService.getContainerLogs(req.params.id, {
+                        follow: true,
+                        tail: parseInt(tail),
+                        since,
+                        timestamps: timestamps === 'true'
+                    });
+                    
+                    // Pipe the log stream to the response
+                    logStream.pipe(res);
+                    
+                    // Handle client disconnect
+                    req.on('close', () => {
+                        logStream.destroy();
+                    });
+                } else {
+                    // For static logs, return as JSON
+                    const logStream = await sessionManager.dockerService.getContainerLogs(req.params.id, {
+                        follow: false,
+                        tail: parseInt(tail),
+                        since,
+                        timestamps: timestamps === 'true'
+                    });
+                    
+                    let logs = '';
+                    logStream.on('data', (chunk) => {
+                        logs += chunk.toString();
+                    });
+                    
+                    logStream.on('end', () => {
+                        res.json({
+                            success: true,
+                            logs,
+                            sessionId: req.params.id
+                        });
+                    });
+                    
+                    logStream.on('error', (error) => {
+                        res.status(500).json({
+                            success: false,
+                            error: error.message
+                        });
+                    });
+                }
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
     // Create new session
     router.post('/',
         [

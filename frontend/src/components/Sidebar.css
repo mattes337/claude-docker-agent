@@ -77,6 +77,8 @@
   transition: all 0.3s ease;
   position: relative;
   border: 2px solid transparent;
+  display: flex;
+  flex-direction: column;
 }
 
 .session-item:hover {
@@ -198,6 +200,41 @@
 
 .status-dot.error {
   background: #dc3545;
+}
+
+/* Session Delete Button */
+.session-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: #6b7280;
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s ease;
+  z-index: 2;
+}
+
+.session-item:hover .session-delete-btn {
+  opacity: 1;
+}
+
+/* Show delete button for stopped sessions */
+.session-item .session-delete-btn {
+  opacity: 0.6;
+}
+
+.session-item:hover .session-delete-btn {
+  opacity: 1;
+}
+
+.session-delete-btn:hover {
+  background: #ef4444;
+  color: white;
+  transform: scale(1.1);
 }
 
 /* Animations */
