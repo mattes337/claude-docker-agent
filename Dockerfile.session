@@ -1,129 +1,47 @@
-# Claude Session Container
-# This Dockerfile creates the base image for Claude Code sessions
-FROM ubuntu:22.04
+# Claude Session Container - Minimal build for slow networks
+FROM node:20-alpine
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TERM=xterm-256color
-ENV NODE_VERSION=20
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    wget \
+# Install minimal system dependencies
+RUN apk add --no-cache \
     git \
-    build-essential \
     python3 \
-    python3-pip \
-    python3-venv \
-    software-properties-common \
-    apt-transport-https \
-    ca-certificates \
-    gnupg \
-    lsb-release \
+    py3-pip \
+    bash \
     vim \
-    nano \
-    htop \
-    tree \
-    jq \
-    unzip \
-    zip \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+    wget
 
-# Install Node.js
-RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
-    && apt-get install -y nodejs
-
-# Install .NET SDK
-RUN wget https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb \
-    && dpkg -i packages-microsoft-prod.deb \
-    && rm packages-microsoft-prod.deb \
-    && apt-get update \
-    && apt-get install -y dotnet-sdk-8.0
-
-# Install Claude CLI
-RUN curl -fsSL https://claude.ai/cli/install.sh | bash \
-    && echo 'export PATH="$HOME/.local/bin:$PATH"' >> /etc/bash.bashrc
-
-# Install common development tools
-RUN npm install -g \
-    typescript \
-    ts-node \
-    nodemon \
-    @types/node \
-    eslint \
-    prettier \
-    create-react-app \
-    @vue/cli \
-    @angular/cli
-
-# Install Python packages
-RUN pip3 install --upgrade pip setuptools wheel \
-    && pip3 install \
+# Install minimal Python packages
+RUN pip3 install --no-cache-dir \
     requests \
     flask \
-    django \
-    fastapi \
-    uvicorn \
-    pytest \
-    black \
-    flake8 \
-    mypy \
-    jupyter \
-    pandas \
-    numpy \
-    matplotlib \
-    seaborn
+    fastapi
 
-# Install additional tools
-RUN curl -sSL https://install.python-poetry.org | python3 - \
-    && echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+# Install minimal Node.js tools
+RUN npm install -g \
+    typescript \
+    ts-node
 
-# Create workspace directory
-RUN mkdir -p /workspace
-WORKDIR /workspace
-
-# Create a non-root user
-RUN useradd -m -s /bin/bash claude \
-    && usermod -aG sudo claude \
-    && echo 'claude ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+# Create workspace and user
+RUN mkdir -p /workspace \
+    && adduser -D -s /bin/bash claude
 
 # Set up git configuration
 RUN git config --global init.defaultBranch main \
     && git config --global user.name "Claude Session" \
     && git config --global user.email "claude@session.local"
 
-# Copy startup script
-COPY <<EOF /usr/local/bin/session-init.sh
-#!/bin/bash
-set -e
-
-echo "🚀 Initializing Claude session..."
-echo "📁 Working directory: \$(pwd)"
-echo "👤 User: \$(whoami)"
-echo "🐍 Python version: \$(python3 --version)"
-echo "📦 Node.js version: \$(node --version)"
-echo "🔷 .NET version: \$(dotnet --version 2>/dev/null || echo 'Not available')"
-echo "🤖 Claude CLI: \$(claude --version 2>/dev/null || echo 'Available')"
-echo ""
-echo "✅ Session ready!"
-echo ""
-
-# Start bash
-exec "\$@"
-EOF
-
-RUN chmod +x /usr/local/bin/session-init.sh
-
 # Switch to claude user
 USER claude
 WORKDIR /workspace
 
-# Set up user environment
-RUN echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc \
-    && echo 'export CLAUDE_SESSION=true' >> ~/.bashrc \
+# Set up environment
+RUN echo 'export CLAUDE_SESSION=true' >> ~/.bashrc \
     && echo 'PS1="🤖 claude@session:\w$ "' >> ~/.bashrc
 
 # Default command
-ENTRYPOINT ["/usr/local/bin/session-init.sh"]
 CMD ["bash", "-l"]

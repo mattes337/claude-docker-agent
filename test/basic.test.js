@@ -41,20 +41,20 @@ describe('Claude Docker Agent', () => {
             expect(Array.isArray(response.body.sessions)).toBe(true);
         });
 
-        test('GET /api/system/status should return system information', async () => {
+        test('GET /api/system/config should return configuration', async () => {
             const response = await request(server)
-                .get('/api/system/status')
+                .get('/api/system/config')
                 .expect(200);
 
             expect(response.body).toHaveProperty('success', true);
-            expect(response.body).toHaveProperty('system');
+            expect(response.body).toHaveProperty('config');
         });
     });
 
     describe('Error Handling', () => {
-        test('GET /nonexistent should return 404', async () => {
+        test('GET /api/nonexistent should return 404', async () => {
             const response = await request(server)
-                .get('/nonexistent')
+                .get('/api/nonexistent')
                 .expect(404);
 
             expect(response.body).toHaveProperty('success', false);

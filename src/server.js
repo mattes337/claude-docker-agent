@@ -7,6 +7,7 @@ const compression = require('compression');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const SessionManager = require('./services/SessionManager');
@@ -82,9 +83,21 @@ class ClaudeDockerAgent {
         this.app.use('/api/containers', require('./routes/containers')(this.dockerService));
         this.app.use('/api/system', require('./routes/system')(this.dockerService, this.sessionManager));
 
-        // Serve frontend for all other routes
-        this.app.get('*', (req, res) => {
-            res.sendFile(path.join(__dirname, '../frontend/build/index.html'));
+        // Serve frontend for all other routes (only if not an API route)
+        this.app.get('*', (req, res, next) => {
+            // Don't serve frontend for API routes
+            if (req.path.startsWith('/api/')) {
+                return next();
+            }
+
+            // Check if frontend build exists
+            const frontendPath = path.join(__dirname, '../frontend/build/index.html');
+            if (fs.existsSync(frontendPath)) {
+                res.sendFile(frontendPath);
+            } else {
+                // Frontend not built, return 404
+                next();
+            }
         });
     }
 
@@ -100,7 +113,7 @@ class ClaudeDockerAgent {
             console.log('✅ Docker service initialized');
 
             // Start server
-            this.server.listen(this.port, () => {
+            this.server.listen(this.port, '0.0.0.0', () => {
                 console.log(`🚀 Claude Docker Agent running on port ${this.port}`);
                 console.log(`📁 Workspaces directory: ${this.sessionManager.workspacesDir}`);
                 console.log(`🐳 Docker API version: ${this.dockerService.getVersion()}`);
@@ -113,13 +126,17 @@ class ClaudeDockerAgent {
 
         } catch (error) {
             console.error('❌ Failed to start server:', error);
-            process.exit(1);
+            // Only exit if not in test environment
+            if (process.env.NODE_ENV !== 'test' && !process.env.JEST_WORKER_ID) {
+                process.exit(1);
+            }
+            throw error;
         }
     }
 
     async shutdown() {
         console.log('🛑 Shutting down gracefully...');
-        
+
         try {
             // Stop all sessions
             await this.sessionManager.stopAllSessions();
@@ -130,14 +147,26 @@ class ClaudeDockerAgent {
             console.log('✅ WebSocket connections closed');
 
             // Close server
-            this.server.close(() => {
-                console.log('✅ Server closed');
-                process.exit(0);
-            });
+            if (this.server) {
+                return new Promise((resolve) => {
+                    this.server.close(() => {
+                        console.log('✅ Server closed');
+                        // Only exit if not in test environment
+                        if (process.env.NODE_ENV !== 'test' && !process.env.JEST_WORKER_ID) {
+                            process.exit(0);
+                        }
+                        resolve();
+                    });
+                });
+            }
 
         } catch (error) {
             console.error('❌ Error during shutdown:', error);
-            process.exit(1);
+            // Only exit if not in test environment
+            if (process.env.NODE_ENV !== 'test' && !process.env.JEST_WORKER_ID) {
+                process.exit(1);
+            }
+            throw error;
         }
     }
 }
