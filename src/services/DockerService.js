@@ -2,6 +2,7 @@ const Docker = require('dockerode');
 const fs = require('fs-extra');
 const path = require('path');
 const tar = require('tar-stream');
+const os = require('os');
 
 class DockerService {
     constructor() {
@@ -116,7 +117,6 @@ class DockerService {
                 Image: this.baseImage,
                 name: `claude-session-${sessionId}`,
                 Env: [
-                    `CLAUDE_API_KEY=${process.env.CLAUDE_API_KEY}`,
                     `SESSION_ID=${sessionId}`,
                     `TERM=xterm-256color`,
                     ...config.env || []
@@ -165,10 +165,67 @@ class DockerService {
 
         try {
             await container.start();
+
+            // Copy Claude credentials to container
+            await this.copyClaudeCredentials(sessionId);
+
             console.log(`✅ Container started for session ${sessionId}`);
             return container;
         } catch (error) {
             throw new Error(`Failed to start container: ${error.message}`);
+        }
+    }
+
+    async copyClaudeCredentials(sessionId) {
+        const container = this.containers.get(sessionId);
+        if (!container) {
+            throw new Error(`Container not found for session ${sessionId}`);
+        }
+
+        try {
+            // Get the Claude directory path
+            const claudeDir = path.join(os.homedir(), '.claude');
+
+            // Check if Claude directory exists
+            if (!await fs.pathExists(claudeDir)) {
+                console.warn('⚠️ Claude credentials directory not found. Please ensure Claude CLI is set up.');
+                return;
+            }
+
+            console.log(`📋 Copying Claude credentials to container ${sessionId}...`);
+
+            // Create tar archive of .claude directory
+            const pack = tar.pack();
+
+            // Add all files from .claude directory
+            const addDirectoryToTar = async (dirPath, tarPath = '') => {
+                const items = await fs.readdir(dirPath);
+
+                for (const item of items) {
+                    const itemPath = path.join(dirPath, item);
+                    const itemTarPath = tarPath ? `${tarPath}/${item}` : item;
+                    const stats = await fs.stat(itemPath);
+
+                    if (stats.isDirectory()) {
+                        await addDirectoryToTar(itemPath, itemTarPath);
+                    } else {
+                        const content = await fs.readFile(itemPath);
+                        pack.entry({ name: itemTarPath }, content);
+                    }
+                }
+            };
+
+            await addDirectoryToTar(claudeDir);
+            pack.finalize();
+
+            // Copy to container's home directory
+            await container.putArchive(pack, { path: '/home/claude' });
+
+            console.log(`✅ Claude credentials copied to container ${sessionId}`);
+
+        } catch (error) {
+            console.error(`❌ Failed to copy Claude credentials: ${error.message}`);
+            // Don't throw error - container can still work without credentials for testing
         }
     }
 

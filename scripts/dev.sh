@@ -24,10 +24,11 @@ fi
 # Source environment variables
 source .env
 
-# Check if Claude API key is set
-if [ -z "$CLAUDE_API_KEY" ] || [ "$CLAUDE_API_KEY" = "your_claude_api_key_here" ]; then
-    echo "❌ CLAUDE_API_KEY is not set in .env file"
-    echo "   Please set your Claude API key and try again."
+# Check if Claude credentials exist
+if [ ! -d "$HOME/.claude" ]; then
+    echo "❌ Claude credentials not found in ~/.claude"
+    echo "   Please ensure Claude CLI is set up with your subscription."
+    echo "   Run 'claude auth' to authenticate."
     exit 1
 fi
 

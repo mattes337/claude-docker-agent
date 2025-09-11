@@ -5,7 +5,6 @@ FROM ubuntu:22.04
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TERM=xterm-256color
-ENV CLAUDE_API_KEY=""
 ENV NODE_VERSION=20
 
 # Install system dependencies
@@ -42,10 +41,9 @@ RUN wget https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-p
     && apt-get update \
     && apt-get install -y dotnet-sdk-8.0
 
-# Install Claude CLI (placeholder - replace with actual installation)
-# Note: This is a placeholder. Replace with actual Claude CLI installation
-RUN echo '#!/bin/bash\necho "Claude CLI placeholder - replace with actual installation"\necho "Arguments: $@"' > /usr/local/bin/claude \
-    && chmod +x /usr/local/bin/claude
+# Install Claude CLI
+RUN curl -fsSL https://claude.ai/cli/install.sh | bash \
+    && echo 'export PATH="$HOME/.local/bin:$PATH"' >> /etc/bash.bashrc
 
 # Install common development tools
 RUN npm install -g \

@@ -1,5 +1,5 @@
 const express = require('express');
-const { param, validationResult } = require('express-validator');
+const { param, body, validationResult } = require('express-validator');
 
 module.exports = (dockerService) => {
     const router = express.Router();
