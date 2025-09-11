@@ -1,7 +1,7 @@
 import React from 'react';
-import { Bot, Plus, Wifi, WifiOff, LayoutDashboard, Terminal } from 'lucide-react';
+import { Bot, Plus, Wifi, WifiOff, LayoutDashboard, Terminal, Container } from 'lucide-react';
 
-const Header = ({ sessionCount, isConnected, onCreateSession, currentView, onViewDashboard, onViewSession, hasActiveSession }) => {
+const Header = ({ sessionCount, isConnected, onCreateSession, currentView, onViewDashboard, onViewSession, onViewContainers, hasActiveSession }) => {
   return (
     <header className="header">
       <div className="header-content">
@@ -26,6 +26,14 @@ const Header = ({ sessionCount, isConnected, onCreateSession, currentView, onVie
           >
             <LayoutDashboard size={16} />
             Dashboard
+          </button>
+          <button 
+            className={`nav-btn ${currentView === 'containers' ? 'active' : ''}`}
+            onClick={onViewContainers}
+            title="Containers"
+          >
+            <Container size={16} />
+            Containers
           </button>
           {hasActiveSession && (
             <button 

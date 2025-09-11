@@ -34,6 +34,82 @@ module.exports = (sessionManager) => {
         }
     });
 
+    // Manual cleanup of stopped sessions
+    router.post('/cleanup/stopped',
+        async (req, res) => {
+            try {
+                await sessionManager.cleanupStoppedSessions();
+                
+                res.json({
+                    success: true,
+                    message: 'Cleanup completed successfully'
+                });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Force cleanup of orphaned containers
+    router.post('/cleanup/orphaned',
+        async (req, res) => {
+            try {
+                await sessionManager.forceCleanupOrphanedContainers();
+                
+                res.json({
+                    success: true,
+                    message: 'Orphaned containers cleaned up successfully'
+                });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Get cleanup statistics
+    router.get('/cleanup/stats',
+        async (req, res) => {
+            try {
+                const totalSessions = sessionManager.getSessionCount();
+                const allSessions = sessionManager.getAllSessions();
+                const stoppedSessions = allSessions.filter(s => s.status === 'stopped' || s.state === 'stopped');
+                
+                // Get Docker container stats
+                const containers = await sessionManager.dockerService.docker.listContainers({ all: true });
+                const claudeContainers = containers.filter(container => 
+                    container.Names.some(name => name.includes('claude-session-'))
+                );
+                
+                const runningContainers = claudeContainers.filter(c => c.State === 'running');
+                const stoppedContainers = claudeContainers.filter(c => c.State === 'exited');
+                
+                res.json({
+                    success: true,
+                    stats: {
+                        totalSessions,
+                        stoppedSessions: stoppedSessions.length,
+                        runningSessions: totalSessions - stoppedSessions.length,
+                        totalContainers: claudeContainers.length,
+                        runningContainers: runningContainers.length,
+                        stoppedContainers: stoppedContainers.length,
+                        lastCleanup: new Date().toISOString()
+                    }
+                });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
     // Get specific session
     router.get('/:id', 
         param('id').isUUID().withMessage('Invalid session ID'),
@@ -286,6 +362,48 @@ module.exports = (sessionManager) => {
                     success: true,
                     message: 'Session output cleared'
                 });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Get all Docker containers
+    router.get('/containers',
+        async (req, res) => {
+            try {
+                const containers = await sessionManager.getAllContainers();
+                
+                res.json({
+                    success: true,
+                    containers,
+                    count: containers.length
+                });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Remove a Docker container
+    router.delete('/containers/:containerId',
+        param('containerId').isLength({ min: 12 }).withMessage('Invalid container ID'),
+        handleValidationErrors,
+        async (req, res) => {
+            try {
+                const result = await sessionManager.removeContainer(req.params.containerId);
+                
+                if (result.success) {
+                    res.json(result);
+                } else {
+                    res.status(500).json(result);
+                }
             } catch (error) {
                 res.status(500).json({
                     success: false,

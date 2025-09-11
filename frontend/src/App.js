@@ -3,15 +3,17 @@ import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
 import Dashboard from './components/Dashboard';
+import Containers from './components/Containers';
 import CreateSessionModal from './components/CreateSessionModal';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useSessionManager } from './hooks/useSessionManager';
 import './App.css';
+import './components/Containers.css';
 
 function App() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState(null);
-  const [currentView, setCurrentView] = useState('dashboard'); // 'dashboard' or 'session'
+  const [currentView, setCurrentView] = useState('dashboard'); // 'dashboard', 'session', or 'containers'
   
   const {
     sessions,
@@ -21,7 +23,9 @@ function App() {
     clearSession,
     loadSessions,
     updateSession,
-    appendSessionOutput
+    appendSessionOutput,
+    loadContainers,
+    removeContainer
   } = useSessionManager();
   
   const { isConnected } = useWebSocket(sessions, activeSessionId, updateSession, appendSessionOutput);
@@ -49,6 +53,11 @@ function App() {
 
   const handleViewDashboard = () => {
     setCurrentView('dashboard');
+    setActiveSessionId(null);
+  };
+
+  const handleViewContainers = () => {
+    setCurrentView('containers');
     setActiveSessionId(null);
   };
 
@@ -88,6 +97,7 @@ function App() {
         currentView={currentView}
         onViewDashboard={handleViewDashboard}
         onViewSession={handleViewSession}
+        onViewContainers={handleViewContainers}
         hasActiveSession={!!activeSessionId}
       />
       
@@ -95,6 +105,11 @@ function App() {
         <Dashboard 
           sessions={Array.from(sessions.values())}
           onSelectSession={handleSelectSession}
+        />
+      ) : currentView === 'containers' ? (
+        <Containers 
+          loadContainers={loadContainers}
+          removeContainer={removeContainer}
         />
       ) : (
         <div className="app-main">

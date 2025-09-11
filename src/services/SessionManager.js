@@ -10,10 +10,99 @@ class SessionManager extends EventEmitter {
         this.dockerService = dockerService;
         this.sessions = new Map();
         this.workspacesDir = path.resolve(process.env.WORKSPACES_DIR || path.join(__dirname, '../../workspaces'));
+        this.sessionsFile = path.join(this.workspacesDir, 'sessions.json');
         this.autoResumeManager = new AutoResumeManager(this);
+        this.cleanupInterval = null;
         
         // Ensure workspaces directory exists
         fs.ensureDirSync(this.workspacesDir);
+        
+        // Load persisted sessions
+        this.loadPersistedSessions();
+        
+        // Start periodic cleanup
+        this.startPeriodicCleanup();
+        
+        // Auto-save sessions periodically
+        this.startAutoSave();
+    }
+
+    async loadPersistedSessions() {
+        try {
+            if (await fs.pathExists(this.sessionsFile)) {
+                console.log('📥 Loading persisted sessions...');
+                const data = await fs.readJson(this.sessionsFile);
+                
+                // Restore sessions and check Docker containers
+                for (const sessionData of data.sessions || []) {
+                    const session = {
+                        ...sessionData,
+                        createdAt: new Date(sessionData.createdAt),
+                        lastActivity: new Date(sessionData.lastActivity),
+                        stoppedAt: sessionData.stoppedAt ? new Date(sessionData.stoppedAt) : undefined,
+                        output: sessionData.output || [],
+                        messageQueue: []
+                    };
+                    
+                    // Check if Docker container still exists
+                    try {
+                        const containerInfo = await this.dockerService.getContainerInfo(session.id);
+                        if (containerInfo) {
+                            session.status = containerInfo.state.Status === 'running' ? 'running' : 'stopped';
+                            session.state = containerInfo.state.Status === 'running' ? 'ready' : 'stopped';
+                        } else {
+                            session.status = 'stopped';
+                            session.state = 'stopped';
+                        }
+                    } catch (error) {
+                        session.status = 'stopped';
+                        session.state = 'stopped';
+                    }
+                    
+                    this.sessions.set(session.id, session);
+                }
+                
+                console.log(`✅ Loaded ${this.sessions.size} persisted sessions`);
+            }
+        } catch (error) {
+            console.warn(`⚠️ Failed to load persisted sessions: ${error.message}`);
+        }
+    }
+
+    async saveSessions() {
+        try {
+            const sessionsArray = Array.from(this.sessions.values()).map(session => ({
+                ...session,
+                // Convert output array to lightweight format for storage
+                outputLength: session.output ? session.output.length : 0
+            }));
+            
+            const data = {
+                savedAt: new Date().toISOString(),
+                sessions: sessionsArray
+            };
+            
+            await fs.writeJson(this.sessionsFile, data, { spaces: 2 });
+        } catch (error) {
+            console.error(`❌ Failed to save sessions: ${error.message}`);
+        }
+    }
+
+    startAutoSave() {
+        // Save sessions every 30 seconds
+        this.saveInterval = setInterval(async () => {
+            await this.saveSessions();
+        }, 30 * 1000);
+        
+        console.log('💾 Auto-save started (saves every 30 seconds)');
+    }
+
+    stopAutoSave() {
+        if (this.saveInterval) {
+            clearInterval(this.saveInterval);
+            this.saveInterval = null;
+            console.log('💾 Auto-save stopped');
+        }
     }
 
     async createSession(config) {
@@ -376,6 +465,7 @@ class SessionManager extends EventEmitter {
             await this.dockerService.stopContainer(sessionId, force);
             
             session.status = 'stopped';
+            session.state = 'stopped';
             session.stoppedAt = new Date();
             
             this.emit('sessionStopped', session);
@@ -474,12 +564,192 @@ class SessionManager extends EventEmitter {
         return this.sessions.size;
     }
 
+    async getAllContainers() {
+        try {
+            const containers = await this.dockerService.docker.listContainers({ all: true });
+            const claudeContainers = containers.filter(container => 
+                container.Names.some(name => name.includes('claude-session-'))
+            );
+
+            return claudeContainers.map(container => {
+                const containerName = container.Names[0].replace('/', '');
+                const sessionId = containerName.replace('claude-session-', '');
+                const session = this.sessions.get(sessionId);
+
+                return {
+                    id: container.Id,
+                    sessionId,
+                    name: containerName,
+                    image: container.Image,
+                    state: container.State,
+                    status: container.Status,
+                    created: new Date(container.Created * 1000),
+                    hasSession: !!session,
+                    sessionInfo: session ? this.getSessionInfo(sessionId) : null
+                };
+            });
+        } catch (error) {
+            console.error('❌ Failed to get containers:', error.message);
+            return [];
+        }
+    }
+
+    async removeContainer(containerId) {
+        try {
+            const dockerContainer = this.dockerService.docker.getContainer(containerId);
+            
+            // Stop container if running
+            try {
+                await dockerContainer.stop();
+            } catch (error) {
+                // Container might already be stopped
+            }
+            
+            // Remove container
+            await dockerContainer.remove({ force: true });
+            
+            console.log(`✅ Removed container ${containerId}`);
+            return { success: true };
+        } catch (error) {
+            console.error(`❌ Failed to remove container ${containerId}:`, error.message);
+            return { success: false, error: error.message };
+        }
+    }
+
+    async cleanupStoppedSessions() {
+        console.log('🧹 Starting cleanup of stopped sessions...');
+        
+        const stoppedSessions = [];
+        this.sessions.forEach((session, sessionId) => {
+            if (session.status === 'stopped' || session.state === 'stopped') {
+                stoppedSessions.push(sessionId);
+            }
+        });
+
+        console.log(`Found ${stoppedSessions.length} stopped sessions to cleanup`);
+
+        for (const sessionId of stoppedSessions) {
+            await this.cleanupSession(sessionId);
+        }
+
+        console.log('✅ Cleanup completed');
+    }
+
+    async cleanupSession(sessionId) {
+        const session = this.sessions.get(sessionId);
+        if (!session) {
+            return;
+        }
+
+        try {
+            console.log(`🧹 Cleaning up session ${sessionId}`);
+
+            // Stop and remove Docker container
+            await this.dockerService.stopContainer(sessionId, true);
+            await this.dockerService.removeContainer(sessionId);
+
+            // Clean up workspace directory if it exists
+            if (session.workDir && session.workDir !== '/') {
+                try {
+                    const fs = require('fs-extra');
+                    if (await fs.pathExists(session.workDir)) {
+                        console.log(`🗑️ Removing workspace: ${session.workDir}`);
+                        await fs.remove(session.workDir);
+                    }
+                } catch (error) {
+                    console.warn(`⚠️ Failed to remove workspace ${session.workDir}: ${error.message}`);
+                }
+            }
+
+            // Remove session from memory
+            this.sessions.delete(sessionId);
+            
+            console.log(`✅ Session ${sessionId} cleaned up successfully`);
+
+        } catch (error) {
+            console.error(`❌ Failed to cleanup session ${sessionId}: ${error.message}`);
+        }
+    }
+
+    async forceCleanupOrphanedContainers() {
+        console.log('🔍 Checking for orphaned containers...');
+        
+        try {
+            const containers = await this.dockerService.docker.listContainers({ all: true });
+            const claudeContainers = containers.filter(container => 
+                container.Names.some(name => name.includes('claude-session-'))
+            );
+
+            console.log(`Found ${claudeContainers.length} Claude containers`);
+
+            for (const container of claudeContainers) {
+                const containerName = container.Names[0].replace('/', '');
+                const sessionId = containerName.replace('claude-session-', '');
+                
+                // If session doesn't exist in memory, it's orphaned
+                if (!this.sessions.has(sessionId)) {
+                    console.log(`🗑️ Removing orphaned container: ${containerName}`);
+                    
+                    try {
+                        const dockerContainer = this.dockerService.docker.getContainer(container.Id);
+                        await dockerContainer.remove({ force: true });
+                        console.log(`✅ Removed orphaned container ${containerName}`);
+                    } catch (error) {
+                        console.warn(`⚠️ Failed to remove container ${containerName}: ${error.message}`);
+                    }
+                }
+            }
+
+        } catch (error) {
+            console.error(`❌ Failed to cleanup orphaned containers: ${error.message}`);
+        }
+    }
+
+    startPeriodicCleanup() {
+        // Run cleanup every 5 minutes
+        this.cleanupInterval = setInterval(async () => {
+            try {
+                await this.cleanupStoppedSessions();
+                await this.forceCleanupOrphanedContainers();
+            } catch (error) {
+                console.error('❌ Periodic cleanup failed:', error.message);
+            }
+        }, 5 * 60 * 1000); // 5 minutes
+
+        console.log('🕐 Periodic cleanup started (runs every 5 minutes)');
+    }
+
+    stopPeriodicCleanup() {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+            this.cleanupInterval = null;
+            console.log('⏹️ Periodic cleanup stopped');
+        }
+    }
+
     async stopAllSessions() {
+        console.log('🛑 Stopping all sessions...');
+        
+        // Stop periodic processes
+        this.stopPeriodicCleanup();
+        this.stopAutoSave();
+        
+        // Save sessions before shutdown
+        await this.saveSessions();
+        
         const promises = [];
         for (const sessionId of this.sessions.keys()) {
             promises.push(this.stopSession(sessionId, true));
         }
         await Promise.all(promises);
+        
+        // Cleanup all stopped sessions
+        await this.cleanupStoppedSessions();
+        
+        // Force cleanup any orphaned containers
+        await this.forceCleanupOrphanedContainers();
+        
+        console.log('✅ All sessions stopped and cleaned up');
     }
 }
 

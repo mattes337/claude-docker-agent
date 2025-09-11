@@ -200,6 +200,18 @@ export const useSessionManager = () => {
     });
   }, []);
 
+  const loadContainers = useCallback(async () => {
+    const result = await apiCall('/sessions/containers');
+    return result;
+  }, []);
+
+  const removeContainer = useCallback(async (containerId) => {
+    const result = await apiCall(`/sessions/containers/${containerId}`, {
+      method: 'DELETE'
+    });
+    return result;
+  }, []);
+
   return {
     sessions,
     loadSessions,
@@ -209,6 +221,8 @@ export const useSessionManager = () => {
     clearSession,
     getSessionOutput,
     updateSession,
-    appendSessionOutput
+    appendSessionOutput,
+    loadContainers,
+    removeContainer
   };
 };
