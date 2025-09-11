@@ -1,0 +1,1422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code Multi-Repository Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            background: #0f0f23;
+            min-height: 100vh;
+            color: #e1e1e1;
+            overflow-x: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header-info {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-top: 5px;
+        }
+
+        .process-counter {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+
+        .main-container {
+            display: flex;
+            height: calc(100vh - 100px);
+        }
+
+        .sidebar {
+            width: 320px;
+            background: #1a1a2e;
+            border-right: 1px solid #2a2a3e;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #2a2a3e;
+        }
+
+        .new-process-btn {
+            width: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .new-process-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .process-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .process-item {
+            background: #2a2a3e;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .process-item:hover {
+            background: #3a3a4e;
+            transform: translateX(5px);
+        }
+
+        .process-item.active {
+            background: linear-gradient(135deg, #667eea20 0%, #764ba220 100%);
+            border-left: 3px solid #667eea;
+        }
+
+        .process-name {
+            font-weight: 600;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .process-repo {
+            font-size: 11px;
+            color: #89b4fa;
+            margin: 3px 0;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .process-branch {
+            font-size: 11px;
+            color: #a6e3a1;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .process-status {
+            font-size: 12px;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-top: 5px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #dc3545;
+            display: inline-block;
+        }
+
+        .status-dot.running {
+            background: #28a745;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.cloning {
+            background: #ffc107;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(40, 167, 69, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0); }
+        }
+
+        .close-process {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 20px;
+            height: 20px;
+            background: #dc3545;
+            border-radius: 50%;
+            border: none;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .process-item:hover .close-process {
+            opacity: 1;
+        }
+
+        .content-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #16161a;
+        }
+
+        .tabs {
+            display: flex;
+            background: #1a1a2e;
+            border-bottom: 1px solid #2a2a3e;
+            overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #2a2a3e #1a1a2e;
+        }
+
+        .tab {
+            padding: 12px 20px;
+            background: transparent;
+            border: none;
+            color: #94a3b8;
+            cursor: pointer;
+            white-space: nowrap;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            position: relative;
+            min-width: 150px;
+        }
+
+        .tab:hover {
+            background: #2a2a3e20;
+            color: #e1e1e1;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            background: #2a2a3e20;
+        }
+
+        .tab-info {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            flex: 1;
+        }
+
+        .tab-title {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .tab-subtitle {
+            font-size: 10px;
+            opacity: 0.7;
+        }
+
+        .tab-close {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: transparent;
+            border: none;
+            color: inherit;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .tab-close:hover {
+            background: #dc3545;
+            color: white;
+        }
+
+        .terminal-container {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .terminal-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .control-btn {
+            background: #2a2a3e;
+            color: #e1e1e1;
+            border: 1px solid #44475a;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .control-btn:hover {
+            background: #3a3a4e;
+            border-color: #667eea;
+        }
+
+        .control-btn.danger {
+            border-color: #dc3545;
+        }
+
+        .control-btn.danger:hover {
+            background: #dc3545;
+        }
+
+        .terminal {
+            background: #1e1e2e;
+            border-radius: 10px;
+            padding: 15px;
+            flex: 1;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #a6e3a1;
+            box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.3);
+            min-height: 300px;
+        }
+
+        .terminal-line {
+            margin: 2px 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .terminal-line.error {
+            color: #f38ba8;
+        }
+
+        .terminal-line.info {
+            color: #89b4fa;
+        }
+
+        .terminal-line.success {
+            color: #a6e3a1;
+        }
+
+        .terminal-line.git {
+            color: #f9e2af;
+        }
+
+        .terminal-line.system {
+            color: #cba6f7;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        .terminal-input {
+            flex: 1;
+            background: #2a2a3e;
+            border: 2px solid #44475a;
+            color: #f8f8f2;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: 'SF Mono', Monaco, monospace;
+            transition: all 0.3s ease;
+        }
+
+        .terminal-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .send-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .info-panel {
+            background: #2a2a3e;
+            border-radius: 10px;
+            padding: 15px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .info-label {
+            color: #94a3b8;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .info-value {
+            color: #a6e3a1;
+            font-size: 13px;
+            font-weight: 600;
+            word-break: break-all;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 30px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-header {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #e1e1e1;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 8px;
+            color: #94a3b8;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-input {
+            width: 100%;
+            background: #2a2a3e;
+            border: 2px solid #44475a;
+            color: #f8f8f2;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-help {
+            font-size: 11px;
+            color: #6272a4;
+            margin-top: 5px;
+        }
+
+        .repo-format-examples {
+            background: #0f0f23;
+            border-radius: 6px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+
+        .repo-format-examples code {
+            color: #a6e3a1;
+            background: #2a2a3e;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 25px;
+        }
+
+        .modal-btn {
+            flex: 1;
+            padding: 12px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .modal-btn.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .modal-btn.secondary {
+            background: #2a2a3e;
+            color: #e1e1e1;
+        }
+
+        .modal-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #94a3b8;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .empty-state svg {
+            width: 100px;
+            height: 100px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .empty-state h2 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
+        .code-section {
+            margin-top: 30px;
+            background: #1a1a2e;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .code-section h3 {
+            color: #e1e1e1;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        pre {
+            background: #0f0f23;
+            border-radius: 8px;
+            padding: 20px;
+            overflow-x: auto;
+            color: #f8f8f2;
+            font-size: 13px;
+            line-height: 1.6;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .highlight {
+            color: #cba6f7;
+        }
+
+        .comment {
+            color: #6272a4;
+        }
+
+        .string {
+            color: #a6e3a1;
+        }
+
+        .icon {
+            width: 14px;
+            height: 14px;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: #2a2a3e;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            animation: progress 2s ease-in-out infinite;
+            width: 30%;
+        }
+
+        @keyframes progress {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(400%); }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>
+            Claude Code Repository Manager
+            <span class="process-counter" id="processCounter">0 sessions</span>
+        </h1>
+        <div class="header-info">
+            Manage multiple Claude Code sessions across different repositories and branches
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <button class="new-process-btn" onclick="showNewProcessModal()">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2v20M2 12h20"/>
+                    </svg>
+                    New Repository Session
+                </button>
+            </div>
+            <div class="process-list" id="processList"></div>
+        </div>
+
+        <div class="content-area">
+            <div class="tabs" id="tabs"></div>
+            <div id="terminalContainers"></div>
+            <div class="empty-state" id="emptyState">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+                </svg>
+                <h2>No Repository Sessions</h2>
+                <p>Start a new Claude Code session by connecting to a GitHub repository</p>
+                <button class="new-process-btn" onclick="showNewProcessModal()">
+                    Connect Repository
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Process Modal -->
+    <div class="modal" id="newProcessModal">
+        <div class="modal-content">
+            <div class="modal-header">Start New Repository Session</div>
+            
+            <div class="form-group">
+                <label class="form-label">Session Name</label>
+                <input type="text" class="form-input" id="processName" placeholder="e.g., Feature Development">
+                <div class="form-help">A friendly name to identify this session</div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">GitHub Repository URL</label>
+                <input type="text" class="form-input" id="repoUrl" placeholder="https://github.com/username/repository.git">
+                <div class="repo-format-examples">
+                    <strong>Supported formats:</strong><br>
+                    • <code>https://github.com/user/repo.git</code><br>
+                    • <code>https://github.com/user/repo</code><br>
+                    • <code>git@github.com:user/repo.git</code>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Branch</label>
+                <input type="text" class="form-input" id="repoBranch" placeholder="main" value="main">
+                <div class="form-help">The branch to checkout after cloning</div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Additional Claude Arguments (Optional)</label>
+                <input type="text" class="form-input" id="claudeArgs" placeholder="e.g., --verbose">
+                <div class="form-help">Extra arguments to pass to Claude (--dangerously-skip-permissions is always included)</div>
+            </div>
+            
+            <div class="modal-actions">
+                <button class="modal-btn secondary" onclick="hideNewProcessModal()">Cancel</button>
+                <button class="modal-btn primary" id="startProcessBtn" onclick="startNewProcess()">Clone & Start Session</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="code-section" style="display: none;" id="codeSection">
+        <h3>Backend Implementation for Repository Management</h3>
+        <pre><code><span class="comment">// Node.js Backend with Git Integration</span>
+<span class="highlight">const</span> express = <span class="highlight">require</span>(<span class="string">'express'</span>);
+<span class="highlight">const</span> { spawn } = <span class="highlight">require</span>(<span class="string">'node-pty'</span>);
+<span class="highlight">const</span> WebSocket = <span class="highlight">require</span>(<span class="string">'ws'</span>);
+<span class="highlight">const</span> cors = <span class="highlight">require</span>(<span class="string">'cors'</span>);
+<span class="highlight">const</span> { v4: uuidv4 } = <span class="highlight">require</span>(<span class="string">'uuid'</span>);
+<span class="highlight">const</span> path = <span class="highlight">require</span>(<span class="string">'path'</span>);
+<span class="highlight">const</span> fs = <span class="highlight">require</span>(<span class="string">'fs-extra'</span>);
+<span class="highlight">const</span> { exec } = <span class="highlight">require</span>(<span class="string">'child_process'</span>);
+<span class="highlight">const</span> { promisify } = <span class="highlight">require</span>(<span class="string">'util'</span>);
+
+<span class="highlight">const</span> execAsync = promisify(exec);
+
+<span class="highlight">class</span> RepositoryProcessManager {
+    <span class="highlight">constructor</span>() {
+        <span class="highlight">this</span>.processes = <span class="highlight">new</span> Map();
+        <span class="highlight">this</span>.clients = <span class="highlight">new</span> Map();
+        <span class="highlight">this</span>.workspacesDir = process.env.WORKSPACES_DIR || <span class="string">'/tmp/claude-workspaces'</span>;
+        
+        <span class="comment">// Ensure workspaces directory exists</span>
+        fs.ensureDirSync(<span class="highlight">this</span>.workspacesDir);
+    }
+
+    <span class="highlight">async</span> createRepositorySession(config) {
+        <span class="highlight">const</span> sessionId = uuidv4();
+        <span class="highlight">const</span> workDir = path.join(<span class="highlight">this</span>.workspacesDir, sessionId);
+        
+        <span class="highlight">const</span> sessionInfo = {
+            id: sessionId,
+            name: config.name || <span class="string">`Session ${sessionId.slice(0, 8)}`</span>,
+            repoUrl: config.repoUrl,
+            branch: config.branch || <span class="string">'main'</span>,
+            workDir,
+            output: [],
+            maxLines: 2000,
+            status: <span class="string">'initializing'</span>,
+            createdAt: <span class="highlight">new</span> Date(),
+            pid: <span class="highlight">null</span>,
+            claudeArgs: config.claudeArgs || []
+        };
+
+        <span class="highlight">try</span> {
+            <span class="comment">// Store session info early</span>
+            <span class="highlight">this</span>.processes.set(sessionId, sessionInfo);
+            
+            <span class="comment">// Broadcast initial status</span>
+            <span class="highlight">this</span>.broadcast(sessionId, {
+                type: <span class="string">'status'</span>,
+                processId: sessionId,
+                status: <span class="string">'cloning'</span>,
+                message: <span class="string">'Cloning repository...'</span>
+            });
+
+            <span class="comment">// Create workspace directory</span>
+            <span class="highlight">await</span> fs.ensureDir(workDir);
+            
+            <span class="comment">// Clone the repository</span>
+            <span class="highlight">await</span> <span class="highlight">this</span>.cloneRepository(sessionInfo);
+            
+            <span class="comment">// Checkout the specified branch</span>
+            <span class="highlight">await</span> <span class="highlight">this</span>.checkoutBranch(sessionInfo);
+            
+            <span class="comment">// Start Claude Code in the repository directory</span>
+            <span class="highlight">await</span> <span class="highlight">this</span>.startClaude(sessionInfo);
+            
+            <span class="highlight">return</span> {
+                success: <span class="highlight">true</span>,
+                session: {
+                    id: sessionInfo.id,
+                    name: sessionInfo.name,
+                    repoUrl: sessionInfo.repoUrl,
+                    branch: sessionInfo.branch,
+                    pid: sessionInfo.pid,
+                    status: sessionInfo.status,
+                    workDir: sessionInfo.workDir
+                }
+            };
+        } <span class="highlight">catch</span> (error) {
+            sessionInfo.status = <span class="string">'error'</span>;
+            sessionInfo.error = error.message;
+            
+            <span class="highlight">this</span>.broadcast(sessionId, {
+                type: <span class="string">'error'</span>,
+                processId: sessionId,
+                message: error.message
+            });
+            
+            <span class="highlight">return</span> {
+                success: <span class="highlight">false</span>,
+                error: error.message
+            };
+        }
+    }
+
+    <span class="highlight">async</span> cloneRepository(sessionInfo) {
+        <span class="highlight">const</span> { repoUrl, workDir, id } = sessionInfo;
+        
+        <span class="highlight">this</span>.addOutput(id, <span class="string">`Cloning repository: ${repoUrl}\n`</span>, <span class="string">'git'</span>);
+        <span class="highlight">this</span>.addOutput(id, <span class="string">`Destination: ${workDir}\n`</span>, <span class="string">'system'</span>);
+        
+        <span class="highlight">try</span> {
+            <span class="comment">// Clone with progress</span>
+            <span class="highlight">const</span> { stdout, stderr } = <span class="highlight">await</span> execAsync(
+                <span class="string">`git clone --progress "${repoUrl}" "${workDir}" 2>&1`</span>
+            );
+            
+            <span class="highlight">this</span>.addOutput(id, stdout || stderr, <span class="string">'git'</span>);
+            <span class="highlight">this</span>.addOutput(id, <span class="string">'Repository cloned successfully\n'</span>, <span class="string">'success'</span>);
+            
+        } <span class="highlight">catch</span> (error) {
+            <span class="highlight">this</span>.addOutput(id, <span class="string">`Clone failed: ${error.message}\n`</span>, <span class="string">'error'</span>);
+            <span class="highlight">throw</span> <span class="highlight">new</span> Error(<span class="string">`Failed to clone repository: ${error.message}`</span>);
+        }
+    }
+
+    <span class="highlight">async</span> checkoutBranch(sessionInfo) {
+        <span class="highlight">const</span> { branch, workDir, id } = sessionInfo;
+        
+        <span class="highlight">this</span>.addOutput(id, <span class="string">`Checking out branch: ${branch}\n`</span>, <span class="string">'git'</span>);
+        
+        <span class="highlight">try</span> {
+            <span class="comment">// First fetch all branches</span>
+            <span class="highlight">await</span> execAsync(<span class="string">`cd "${workDir}" && git fetch --all`</span>);
+            
+            <span class="comment">// Try to checkout the branch</span>
+            <span class="highlight">const</span> { stdout, stderr } = <span class="highlight">await</span> execAsync(
+                <span class="string">`cd "${workDir}" && git checkout "${branch}" 2>&1`</span>
+            );
+            
+            <span class="highlight">this</span>.addOutput(id, stdout || stderr, <span class="string">'git'</span>);
+            
+            <span class="comment">// Get current branch info</span>
+            <span class="highlight">const</span> { stdout: branchInfo } = <span class="highlight">await</span> execAsync(
+                <span class="string">`cd "${workDir}" && git rev-parse --abbrev-ref HEAD`</span>
+            );
+            
+            <span class="highlight">this</span>.addOutput(id, <span class="string">`Current branch: ${branchInfo}`</span>, <span class="string">'success'</span>);
+            
+        } <span class="highlight">catch</span> (error) {
+            <span class="comment">// If branch doesn't exist, create it</span>
+            <span class="highlight">if</span> (error.message.includes(<span class="string">'did not match any file'</span>)) {
+                <span class="highlight">try</span> {
+                    <span class="highlight">await</span> execAsync(<span class="string">`cd "${workDir}" && git checkout -b "${branch}"`</span>);
+                    <span class="highlight">this</span>.addOutput(id, <span class="string">`Created new branch: ${branch}\n`</span>, <span class="string">'success'</span>);
+                } <span class="highlight">catch</span> (createError) {
+                    <span class="highlight">throw</span> <span class="highlight">new</span> Error(<span class="string">`Failed to create branch: ${createError.message}`</span>);
+                }
+            } <span class="highlight">else</span> {
+                <span class="highlight">this</span>.addOutput(id, <span class="string">`Checkout failed: ${error.message}\n`</span>, <span class="string">'error'</span>);
+                <span class="highlight">throw</span> <span class="highlight">new</span> Error(<span class="string">`Failed to checkout branch: ${error.message}`</span>);
+            }
+        }
+    }
+
+    <span class="highlight">async</span> startClaude(sessionInfo) {
+        <span class="highlight">const</span> { workDir, id, claudeArgs } = sessionInfo;
+        
+        <span class="highlight">this</span>.addOutput(id, <span class="string">'\n═══════════════════════════════════════\n'</span>, <span class="string">'system'</span>);
+        <span class="highlight">this</span>.addOutput(id, <span class="string">'Starting Claude Code...\n'</span>, <span class="string">'system'</span>);
+        <span class="highlight">this</span>.addOutput(id, <span class="string">`Working directory: ${workDir}\n`</span>, <span class="string">'system'</span>);
+        <span class="highlight">this</span>.addOutput(id, <span class="string">'═══════════════════════════════════════\n\n'</span>, <span class="string">'system'</span>);
+        
+        <span class="highlight">try</span> {
+            <span class="comment">// Prepare Claude arguments</span>
+            <span class="highlight">const</span> args = [<span class="string">'--dangerously-skip-permissions'</span>, ...claudeArgs];
+            
+            <span class="comment">// Start Claude Code with PTY</span>
+            <span class="highlight">const</span> ptyProcess = spawn(<span class="string">'claude'</span>, args, {
+                name: <span class="string">'xterm-color'</span>,
+                cols: 100,
+                rows: 40,
+                cwd: workDir,
+                env: {
+                    ...process.env,
+                    TERM: <span class="string">'xterm-256color'</span>
+                }
+            });
+
+            sessionInfo.process = ptyProcess;
+            sessionInfo.pid = ptyProcess.pid;
+            sessionInfo.status = <span class="string">'running'</span>;
+
+            <span class="comment">// Handle output</span>
+            ptyProcess.on(<span class="string">'data'</span>, (data) => {
+                <span class="highlight">this</span>.addOutput(id, data.toString(), <span class="string">'stdout'</span>);
+            });
+
+            <span class="comment">// Handle exit</span>
+            ptyProcess.on(<span class="string">'exit'</span>, (code) => {
+                sessionInfo.status = <span class="string">'exited'</span>;
+                sessionInfo.exitCode = code;
+                sessionInfo.endedAt = <span class="highlight">new</span> Date();
+                
+                <span class="highlight">this</span>.addOutput(id, <span class="string">`\nClaude Code exited with code ${code}\n`</span>, <span class="string">'system'</span>);
+                
+                <span class="highlight">this</span>.broadcast(id, {
+                    type: <span class="string">'process_exit'</span>,
+                    processId: id,
+                    code
+                });
+            });
+
+            <span class="highlight">this</span>.addOutput(id, <span class="string">`Claude Code started (PID: ${ptyProcess.pid})\n`</span>, <span class="string">'success'</span>);
+            
+        } <span class="highlight">catch</span> (error) {
+            <span class="highlight">this</span>.addOutput(id, <span class="string">`Failed to start Claude: ${error.message}\n`</span>, <span class="string">'error'</span>);
+            <span class="highlight">throw</span> <span class="highlight">new</span> Error(<span class="string">`Failed to start Claude Code: ${error.message}`</span>);
+        }
+    }
+
+    addOutput(id, data, type = <span class="string">'stdout'</span>) {
+        <span class="highlight">const</span> sessionInfo = <span class="highlight">this</span>.processes.get(id);
+        <span class="highlight">if</span> (!sessionInfo) <span class="highlight">return</span>;
+        
+        <span class="highlight">const</span> output = {
+            timestamp: <span class="highlight">new</span> Date(),
+            data,
+            type
+        };
+        
+        sessionInfo.output.push(output);
+        
+        <span class="comment">// Trim buffer if too large</span>
+        <span class="highlight">if</span> (sessionInfo.output.length > sessionInfo.maxLines) {
+            sessionInfo.output.shift();
+        }
+        
+        <span class="comment">// Broadcast to clients</span>
+        <span class="highlight">this</span>.broadcast(id, {
+            type: <span class="string">'output'</span>,
+            processId: id,
+            data,
+            outputType: type
+        });
+    }
+
+    <span class="highlight">async</span> cleanupSession(id) {
+        <span class="highlight">const</span> sessionInfo = <span class="highlight">this</span>.processes.get(id);
+        <span class="highlight">if</span> (!sessionInfo) <span class="highlight">return</span>;
+        
+        <span class="comment">// Stop the process if running</span>
+        <span class="highlight">if</span> (sessionInfo.process && sessionInfo.status === <span class="string">'running'</span>) {
+            sessionInfo.process.kill();
+        }
+        
+        <span class="comment">// Remove the workspace directory</span>
+        <span class="highlight">try</span> {
+            <span class="highlight">await</span> fs.remove(sessionInfo.workDir);
+            <span class="highlight">this</span>.addOutput(id, <span class="string">`Cleaned up workspace: ${sessionInfo.workDir}\n`</span>, <span class="string">'system'</span>);
+        } <span class="highlight">catch</span> (error) {
+            console.error(<span class="string">`Failed to cleanup workspace: ${error.message}`</span>);
+        }
+        
+        <span class="comment">// Remove from processes map</span>
+        <span class="highlight">this</span>.processes.delete(id);
+    }
+
+    <span class="comment">// ... rest of the methods (sendInput, broadcast, etc.) ...</span>
+}
+
+<span class="comment">// Express API Setup</span>
+<span class="highlight">const</span> app = express();
+<span class="highlight">const</span> manager = <span class="highlight">new</span> RepositoryProcessManager();
+
+app.use(cors());
+app.use(express.json());
+
+<span class="comment">// API Endpoints</span>
+app.post(<span class="string">'/api/sessions'</span>, <span class="highlight">async</span> (req, res) => {
+    <span class="highlight">const</span> result = <span class="highlight">await</span> manager.createRepositorySession(req.body);
+    res.json(result);
+});
+
+app.get(<span class="string">'/api/sessions'</span>, (req, res) => {
+    <span class="highlight">const</span> sessions = [];
+    manager.processes.forEach(session => {
+        sessions.push({
+            id: session.id,
+            name: session.name,
+            repoUrl: session.repoUrl,
+            branch: session.branch,
+            status: session.status,
+            pid: session.pid,
+            workDir: session.workDir,
+            createdAt: session.createdAt
+        });
+    });
+    res.json(sessions);
+});
+
+app.delete(<span class="string">'/api/sessions/:id'</span>, <span class="highlight">async</span> (req, res) => {
+    <span class="highlight">await</span> manager.cleanupSession(req.params.id);
+    res.json({ success: <span class="highlight">true</span> });
+});
+
+<span class="comment">// ... rest of the API endpoints ...</span>
+
+app.listen(3000, () => {
+    console.log(<span class="string">'Repository Process Manager running on port 3000'</span>);
+});</code></pre>
+    </div>
+
+    <script>
+        // State management
+        let processes = new Map();
+        let activeProcessId = null;
+        let ws = null;
+
+        // Initialize WebSocket connection
+        function initWebSocket() {
+            // This would connect to your backend
+            // ws = new WebSocket('ws://localhost:3000');
+            console.log('WebSocket initialized (demo mode)');
+        }
+
+        // Process Management
+        function showNewProcessModal() {
+            document.getElementById('newProcessModal').classList.add('active');
+            document.getElementById('processName').value = `Session ${processes.size + 1}`;
+        }
+
+        function hideNewProcessModal() {
+            document.getElementById('newProcessModal').classList.remove('active');
+        }
+
+        async function startNewProcess() {
+            const name = document.getElementById('processName').value;
+            const repoUrl = document.getElementById('repoUrl').value;
+            const branch = document.getElementById('repoBranch').value;
+            const claudeArgs = document.getElementById('claudeArgs').value;
+
+            if (!repoUrl) {
+                alert('Please enter a repository URL');
+                return;
+            }
+
+            // Disable button during creation
+            const btn = document.getElementById('startProcessBtn');
+            btn.disabled = true;
+            btn.textContent = 'Cloning repository...';
+
+            // Create process (in real implementation, this would be an API call)
+            const processId = Date.now().toString();
+            const processInfo = {
+                id: processId,
+                name: name || `Session ${processId}`,
+                repoUrl,
+                branch,
+                claudeArgs,
+                status: 'cloning',
+                output: [],
+                pid: null,
+                workDir: `/tmp/claude-workspaces/${processId}`
+            };
+
+            processes.set(processId, processInfo);
+            
+            // Update UI
+            updateProcessList();
+            createTab(processId);
+            switchToProcess(processId);
+            hideNewProcessModal();
+            updateProcessCounter();
+
+            // Reset button
+            btn.disabled = false;
+            btn.textContent = 'Clone & Start Session';
+
+            // Simulate cloning and setup process
+            simulateRepositorySetup(processId);
+        }
+
+        function simulateRepositorySetup(processId) {
+            const proc = processes.get(processId);
+            
+            // Simulate cloning
+            appendOutput(processId, `Cloning repository: ${proc.repoUrl}\n`, 'git');
+            appendOutput(processId, `Destination: ${proc.workDir}\n`, 'system');
+            
+            setTimeout(() => {
+                appendOutput(processId, 'Cloning into repository...\n', 'git');
+                appendOutput(processId, 'Receiving objects: 100% (1234/1234), done.\n', 'git');
+                appendOutput(processId, 'Repository cloned successfully\n', 'success');
+                
+                // Simulate checkout
+                setTimeout(() => {
+                    appendOutput(processId, `Checking out branch: ${proc.branch}\n`, 'git');
+                    appendOutput(processId, `Switched to branch '${proc.branch}'\n`, 'success');
+                    
+                    // Simulate starting Claude
+                    setTimeout(() => {
+                        appendOutput(processId, '\n═══════════════════════════════════════\n', 'system');
+                        appendOutput(processId, 'Starting Claude Code...\n', 'system');
+                        appendOutput(processId, `Working directory: ${proc.workDir}\n`, 'system');
+                        appendOutput(processId, '═══════════════════════════════════════\n\n', 'system');
+                        
+                        proc.status = 'running';
+                        proc.pid = Math.floor(Math.random() * 10000) + 1000;
+                        
+                        appendOutput(processId, `Claude Code started (PID: ${proc.pid})\n`, 'success');
+                        appendOutput(processId, 'Claude is ready. Type your request below.\n', 'info');
+                        
+                        updateProcessList();
+                    }, 1000);
+                }, 1000);
+            }, 1500);
+        }
+
+        function updateProcessList() {
+            const list = document.getElementById('processList');
+            list.innerHTML = '';
+            
+            processes.forEach((proc, id) => {
+                const item = document.createElement('div');
+                item.className = `process-item ${id === activeProcessId ? 'active' : ''}`;
+                item.onclick = () => switchToProcess(id);
+                
+                const repoName = proc.repoUrl.split('/').pop().replace('.git', '');
+                
+                item.innerHTML = `
+                    <div class="process-name">
+                        <span>${proc.name}</span>
+                        <button class="close-process" onclick="event.stopPropagation(); removeProcess('${id}')">×</button>
+                    </div>
+                    <div class="process-repo">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+                        </svg>
+                        ${repoName}
+                    </div>
+                    <div class="process-branch">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="6" y1="3" x2="6" y2="15"></line>
+                            <circle cx="18" cy="6" r="3"></circle>
+                            <circle cx="6" cy="18" r="3"></circle>
+                            <path d="M18 9a9 9 0 01-9 9"></path>
+                        </svg>
+                        ${proc.branch}
+                    </div>
+                    <div class="process-status">
+                        <span class="status-dot ${proc.status === 'running' ? 'running' : proc.status === 'cloning' ? 'cloning' : ''}"></span>
+                        ${proc.status} ${proc.pid ? `- PID: ${proc.pid}` : ''}
+                    </div>
+                `;
+                
+                list.appendChild(item);
+            });
+        }
+
+        function createTab(processId) {
+            const tabsContainer = document.getElementById('tabs');
+            const tab = document.createElement('button');
+            tab.className = 'tab';
+            tab.id = `tab-${processId}`;
+            tab.onclick = () => switchToProcess(processId);
+            
+            const proc = processes.get(processId);
+            const repoName = proc.repoUrl.split('/').pop().replace('.git', '');
+            
+            tab.innerHTML = `
+                <span class="status-dot ${proc.status === 'running' ? 'running' : proc.status === 'cloning' ? 'cloning' : ''}"></span>
+                <div class="tab-info">
+                    <div class="tab-title">${proc.name}</div>
+                    <div class="tab-subtitle">${repoName} • ${proc.branch}</div>
+                </div>
+                <button class="tab-close" onclick="event.stopPropagation(); removeProcess('${processId}')">×</button>
+            `;
+            
+            tabsContainer.appendChild(tab);
+            
+            // Create terminal container
+            createTerminalContainer(processId);
+        }
+
+        function createTerminalContainer(processId) {
+            const proc = processes.get(processId);
+            const containersDiv = document.getElementById('terminalContainers');
+            
+            const container = document.createElement('div');
+            container.className = 'terminal-container';
+            container.id = `terminal-${processId}`;
+            container.style.display = 'none';
+            
+            const repoName = proc.repoUrl.split('/').pop().replace('.git', '');
+            
+            container.innerHTML = `
+                <div class="terminal-controls">
+                    <button class="control-btn" onclick="clearTerminal('${processId}')">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="4 17 10 11 4 5"></polyline>
+                            <line x1="12" y1="19" x2="20" y2="19"></line>
+                        </svg>
+                        Clear
+                    </button>
+                    <button class="control-btn" onclick="gitStatus('${processId}')">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+                        </svg>
+                        Git Status
+                    </button>
+                    <button class="control-btn danger" onclick="stopProcess('${processId}')">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        </svg>
+                        Stop Session
+                    </button>
+                </div>
+                <div class="info-panel">
+                    <div class="info-item">
+                        <span class="info-label">Status</span>
+                        <span class="info-value" id="status-${processId}">${proc.status}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Repository</span>
+                        <span class="info-value">${repoName}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Branch</span>
+                        <span class="info-value">${proc.branch}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">PID</span>
+                        <span class="info-value" id="pid-${processId}">${proc.pid || 'Starting...'}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Working Directory</span>
+                        <span class="info-value">${proc.workDir}</span>
+                    </div>
+                </div>
+                <div class="terminal" id="output-${processId}">
+                    ${proc.output.map(o => `<div class="terminal-line ${o.type}">${escapeHtml(o.text)}</div>`).join('')}
+                </div>
+                <div class="input-group">
+                    <input type="text" class="terminal-input" id="input-${processId}" 
+                           placeholder="Enter command for Claude..." 
+                           onkeypress="if(event.key==='Enter') sendInput('${processId}')">
+                    <button class="send-btn" onclick="sendInput('${processId}')">Send</button>
+                </div>
+            `;
+            
+            containersDiv.appendChild(container);
+        }
+
+        function switchToProcess(processId) {
+            activeProcessId = processId;
+            
+            // Update tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            const activeTab = document.getElementById(`tab-${processId}`);
+            if (activeTab) activeTab.classList.add('active');
+            
+            // Update process list
+            updateProcessList();
+            
+            // Show/hide terminal containers
+            document.querySelectorAll('.terminal-container').forEach(container => {
+                container.style.display = 'none';
+            });
+            const activeContainer = document.getElementById(`terminal-${processId}`);
+            if (activeContainer) activeContainer.style.display = 'flex';
+            
+            // Hide empty state if we have processes
+            document.getElementById('emptyState').style.display = 'none';
+        }
+
+        function removeProcess(processId) {
+            if (!confirm('Are you sure you want to stop this session and remove the workspace?')) {
+                return;
+            }
+            
+            // Stop process first
+            stopProcess(processId);
+            
+            // Remove from state
+            processes.delete(processId);
+            
+            // Remove UI elements
+            const tab = document.getElementById(`tab-${processId}`);
+            if (tab) tab.remove();
+            
+            const container = document.getElementById(`terminal-${processId}`);
+            if (container) container.remove();
+            
+            // Update list
+            updateProcessList();
+            updateProcessCounter();
+            
+            // Switch to another process or show empty state
+            if (processes.size > 0) {
+                const firstProcessId = processes.keys().next().value;
+                switchToProcess(firstProcessId);
+            } else {
+                activeProcessId = null;
+                document.getElementById('emptyState').style.display = 'flex';
+            }
+        }
+
+        function stopProcess(processId) {
+            const proc = processes.get(processId);
+            if (proc && proc.status === 'running') {
+                proc.status = 'stopped';
+                appendOutput(processId, '\nStopping Claude Code session...\n', 'system');
+                appendOutput(processId, 'Session terminated\n', 'error');
+                updateProcessList();
+                
+                // Update status in info panel
+                const statusEl = document.getElementById(`status-${processId}`);
+                if (statusEl) statusEl.textContent = 'stopped';
+            }
+        }
+
+        function gitStatus(processId) {
+            appendOutput(processId, '\n> git status\n', 'info');
+            // Simulate git status output
+            appendOutput(processId, 'On branch main\n', 'git');
+            appendOutput(processId, 'Your branch is up to date with \'origin/main\'.\n', 'git');
+            appendOutput(processId, '\nnothing to commit, working tree clean\n', 'git');
+        }
+
+        function sendInput(processId) {
+            const input = document.getElementById(`input-${processId}`);
+            if (!input || !input.value) return;
+            
+            const proc = processes.get(processId);
+            if (proc.status !== 'running') {
+                alert('Session is not running');
+                return;
+            }
+            
+            appendOutput(processId, `> ${input.value}\n`, 'info');
+            
+            // Simulate Claude response
+            setTimeout(() => {
+                appendOutput(processId, `Claude: Processing your request "${input.value}"...\n`, 'success');
+            }, 100);
+            
+            input.value = '';
+        }
+
+        function appendOutput(processId, text, type = '') {
+            const proc = processes.get(processId);
+            if (!proc) return;
+            
+            proc.output.push({ text, type });
+            
+            const outputEl = document.getElementById(`output-${processId}`);
+            if (outputEl) {
+                const line = document.createElement('div');
+                line.className = `terminal-line ${type}`;
+                line.textContent = text;
+                outputEl.appendChild(line);
+                outputEl.scrollTop = outputEl.scrollHeight;
+            }
+        }
+
+        function clearTerminal(processId) {
+            const proc = processes.get(processId);
+            if (proc) {
+                proc.output = [{ text: 'Terminal cleared\n', type: 'system' }];
+                const outputEl = document.getElementById(`output-${processId}`);
+                if (outputEl) {
+                    outputEl.innerHTML = '<div class="terminal-line system">Terminal cleared</div>';
+                }
+            }
+        }
+
+        function updateProcessCounter() {
+            const counter = document.getElementById('processCounter');
+            const count = processes.size;
+            counter.textContent = `${count} session${count !== 1 ? 's' : ''}`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initWebSocket();
+            updateProcessCounter();
+        });
+
+        // Handle modal clicks
+        document.getElementById('newProcessModal').addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) {
+                hideNewProcessModal();
+            }
+        });
+    </script>
+</body>
+</html>
