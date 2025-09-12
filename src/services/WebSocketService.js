@@ -101,6 +101,19 @@ class WebSocketService {
             });
         });
 
+        this.sessionManager.on('sessionOutputReplaced', (sessionId, output) => {
+            // Extract data from output object if needed
+            const outputData = typeof output === 'object' && output.data ? output.data : output;
+            
+            // Broadcast replacement event to replace entire screen content
+            this.broadcast(sessionId, {
+                type: 'output_replace',
+                sessionId,
+                output: outputData,
+                rawOutput: output
+            });
+        });
+
         this.sessionManager.on('resumeScheduled', (sessionId, resetTime) => {
             this.broadcast(sessionId, {
                 type: 'resume_scheduled',
@@ -130,6 +143,10 @@ class WebSocketService {
                 
             case 'execute_command':
                 this.handleExecuteCommand(ws, data);
+                break;
+                
+            case 'terminate_process':
+                this.handleTerminateProcess(ws, data);
                 break;
                 
             case 'get_sessions':
@@ -246,6 +263,28 @@ class WebSocketService {
             
         } catch (error) {
             this.sendError(ws, `Failed to execute command: ${error.message}`);
+        }
+    }
+
+    async handleTerminateProcess(ws, data) {
+        const { sessionId, force } = data;
+        
+        if (!sessionId) {
+            this.sendError(ws, 'Session ID required');
+            return;
+        }
+        
+        try {
+            const result = await this.sessionManager.terminateClaudeProcess(sessionId, force);
+            
+            this.send(ws, {
+                type: 'terminate_result',
+                sessionId,
+                result
+            });
+            
+        } catch (error) {
+            this.sendError(ws, `Failed to terminate process: ${error.message}`);
         }
     }
 

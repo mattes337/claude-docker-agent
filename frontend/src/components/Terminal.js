@@ -166,6 +166,12 @@ const Terminal = ({ session, onExecuteCommand, onTerminateProcess }) => {
   };
 
   const formatOutput = (output, rawOutput) => {
+    console.log('formatOutput called with:', {
+      outputLength: output?.length || 0,
+      rawOutputLength: rawOutput?.length || 0,
+      firstRawItem: rawOutput?.[0],
+      outputSample: output?.substring(0, 200)
+    });
     // Process ANSI escape sequences for proper web display instead of removing them
     const processANSI = (text) => {
       if (typeof text !== 'string') return { clean: text, rendered: text };
@@ -190,6 +196,14 @@ const Terminal = ({ session, onExecuteCommand, onTerminateProcess }) => {
         const renderedContent = processed.rendered;
         const backendType = item.type || 'output';
         
+        console.log('Processing rawOutput item:', {
+          index,
+          backendType,
+          contentLength: content.length,
+          contentPreview: content.substring(0, 50),
+          hasData: !!item.data
+        });
+        
         // Map backend types to display types
         let displayType = 'output';
         if (backendType === 'system') displayType = 'system';
@@ -209,6 +223,8 @@ const Terminal = ({ session, onExecuteCommand, onTerminateProcess }) => {
         else if (content.includes('Error:') || content.includes('error:')) displayType = 'error';
         else if (content.includes('Warning:') || content.includes('warning:')) displayType = 'warning';
         else if (content.includes('Success:') || content.includes('✓')) displayType = 'success';
+        
+        console.log('Mapped to displayType:', displayType);
         
         return { 
           type: displayType, 
@@ -360,28 +376,47 @@ const Terminal = ({ session, onExecuteCommand, onTerminateProcess }) => {
             )}
           </div>
         ) : (
-          outputLines.map((line) => (
-            <div key={line.key} className={`terminal-line streaming ${line.type}`}>
-              {line.type === 'welcome' ? (
-                <div className="welcome-message">
-                  <LLMMessage 
-                    content={line.content} 
-                    isStreaming={false} 
-                  />
-                </div>
-              ) : line.type.startsWith('claude-message') ? (
-                <div className={`claude-response ${line.type}`}>
-                  {line.type === 'claude-message-start' ? (
-                    <div className="claude-message-header">{line.content}</div>
-                  ) : line.type === 'claude-message-delta' ? (
+          outputLines.map((line) => {
+            console.log('Terminal rendering line:', {
+              key: line.key,
+              type: line.type,
+              content: line.content?.substring(0, 100) + (line.content?.length > 100 ? '...' : ''),
+              hasContent: !!line.content
+            });
+            
+            return (
+              <div key={line.key} className={`terminal-line streaming ${line.type}`}>
+                {line.type === 'welcome' ? (
+                  <div className="welcome-message">
+                    <div style={{background: 'yellow', padding: '4px', marginBottom: '4px'}}>
+                      DEBUG: Rendering welcome message with LLMMessage
+                    </div>
                     <LLMMessage 
                       content={line.content} 
-                      isStreaming={true} 
+                      isStreaming={false} 
                     />
-                  ) : (
-                    <div className="claude-message-end">{line.content}</div>
-                  )}
-                </div>
+                  </div>
+                ) : line.type.startsWith('claude-message') ? (
+                  <div className={`claude-response ${line.type}`}>
+                    <div style={{background: 'orange', padding: '4px', marginBottom: '4px'}}>
+                      DEBUG: Rendering claude message type: {line.type}
+                    </div>
+                    {line.type === 'claude-message-start' ? (
+                      <div className="claude-message-header">{line.content}</div>
+                    ) : line.type === 'claude-message-delta' ? (
+                      <div>
+                        <div style={{background: 'cyan', padding: '4px', marginBottom: '4px'}}>
+                          DEBUG: Calling LLMMessage for claude-message-delta
+                        </div>
+                        <LLMMessage 
+                          content={line.content} 
+                          isStreaming={true} 
+                        />
+                      </div>
+                    ) : (
+                      <div className="claude-message-end">{line.content}</div>
+                    )}
+                  </div>
               ) : line.renderedContent ? (
                 <div dangerouslySetInnerHTML={{ __html: line.renderedContent }} />
               ) : (
@@ -390,7 +425,8 @@ const Terminal = ({ session, onExecuteCommand, onTerminateProcess }) => {
                 </div>
               )}
             </div>
-          ))
+            );
+          })
         )}
         {isExecuting && (
           <div className="terminal-line">

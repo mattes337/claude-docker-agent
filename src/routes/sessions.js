@@ -156,10 +156,32 @@ module.exports = (sessionManager) => {
                 const { lines, offset } = req.query;
                 let output = session.output;
                 
+                console.log('Session output debug:', {
+                    sessionId: req.params.id,
+                    totalItems: output?.length || 0,
+                    outputSample: output?.slice(0, 5)?.map(item => ({
+                        type: item?.type,
+                        dataLength: item?.data?.length || 0,
+                        dataPreview: item?.data?.substring(0, 50) || 'no data'
+                    })),
+                    lastFewItems: output?.slice(-5)?.map(item => ({
+                        type: item?.type,
+                        dataLength: item?.data?.length || 0,
+                        dataPreview: item?.data?.substring(0, 50) || 'no data'
+                    })),
+                    allTypes: [...new Set(output?.map(item => item?.type) || [])]
+                });
+                
                 // Filter out system setup messages that aren't relevant for chat interface
                 if (Array.isArray(output)) {
                     output = output.filter(item => {
                         const type = item.type || 'output';
+                        
+                        // Always keep important chat message types
+                        const keepTypes = ['welcome', 'claude_message_start', 'claude_message_delta', 'claude_message_end', 'claude_tool', 'claude_tool_result', 'claude_status', 'user', 'error', 'success'];
+                        if (keepTypes.includes(type)) {
+                            return true;
+                        }
                         
                         // Hide system setup messages that aren't relevant for chat
                         const hideTypes = ['system', 'git'];
@@ -174,6 +196,16 @@ module.exports = (sessionManager) => {
                         }
                         
                         return true;
+                    });
+                    
+                    console.log('After filtering:', {
+                        originalCount: session.output?.length || 0,
+                        filteredCount: output?.length || 0,
+                        filteredTypes: [...new Set(output?.map(item => item?.type) || [])],
+                        filteredSample: output?.slice(0, 3)?.map(item => ({
+                            type: item?.type,
+                            dataPreview: item?.data?.substring(0, 30) || 'no data'
+                        }))
                     });
                 }
                 

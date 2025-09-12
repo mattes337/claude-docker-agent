@@ -167,11 +167,13 @@ class NodePtySessionManager extends EventEmitter {
             });
 
             cloneProcess.stdout.on('data', (data) => {
-                this.addOutput(id, data.toString(), 'git');
+                const cleanOutput = this.cleanAnsiEscapeSequences(data.toString());
+                this.addOutput(id, cleanOutput, 'git');
             });
 
             cloneProcess.stderr.on('data', (data) => {
-                this.addOutput(id, data.toString(), 'git');
+                const cleanOutput = this.cleanAnsiEscapeSequences(data.toString());
+                this.addOutput(id, cleanOutput, 'git');
             });
 
             await new Promise((resolve, reject) => {
@@ -204,11 +206,13 @@ class NodePtySessionManager extends EventEmitter {
             });
 
             checkoutProcess.stdout.on('data', (data) => {
-                this.addOutput(id, data.toString(), 'git');
+                const cleanOutput = this.cleanAnsiEscapeSequences(data.toString());
+                this.addOutput(id, cleanOutput, 'git');
             });
 
             checkoutProcess.stderr.on('data', (data) => {
-                this.addOutput(id, data.toString(), 'git');
+                const cleanOutput = this.cleanAnsiEscapeSequences(data.toString());
+                this.addOutput(id, cleanOutput, 'git');
             });
 
             await new Promise((resolve, reject) => {
@@ -274,19 +278,21 @@ class NodePtySessionManager extends EventEmitter {
 
             // Handle real-time streaming output
             claudeProcess.stdout.on('data', (data) => {
-                const output = data.toString('utf8');
-                this.addOutput(sessionId, output, 'claude');
+                const rawOutput = data.toString('utf8');
+                const cleanOutput = this.cleanAnsiEscapeSequences(rawOutput);
+                this.addOutput(sessionId, cleanOutput, 'claude');
                 
-                // Extract conversation ID
-                const idMatch = output.match(/conversation_id:\s*([a-zA-Z0-9-]+)/);
+                // Extract conversation ID from cleaned output
+                const idMatch = cleanOutput.match(/conversation_id:\s*([a-zA-Z0-9-]+)/);
                 if (idMatch) {
                     session.conversationId = idMatch[1];
                 }
             });
 
             claudeProcess.stderr.on('data', (data) => {
-                const output = data.toString('utf8');
-                this.addOutput(sessionId, output, 'claude_error');
+                const rawOutput = data.toString('utf8');
+                const cleanOutput = this.cleanAnsiEscapeSequences(rawOutput);
+                this.addOutput(sessionId, cleanOutput, 'claude_error');
             });
 
             // Wait for completion
@@ -442,6 +448,67 @@ class NodePtySessionManager extends EventEmitter {
         await Promise.all(promises);
         
         console.log('✅ All sessions stopped');
+    }
+
+    /**
+     * Comprehensive ANSI escape sequence cleaning for web-safe terminal output
+     * Handles various terminal escape sequences while preserving text structure
+     */
+    cleanAnsiEscapeSequences(text) {
+        if (!text) return text;
+        
+        let cleaned = text;
+        
+        // Remove common ANSI escape sequences
+        cleaned = cleaned
+            // CSI (Control Sequence Introducer) sequences - standard and with parameters
+            .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+            // CSI sequences with private mode indicators (?, !, >, <)
+            .replace(/\x1b\[[?!><][0-9;]*[a-zA-Z]/g, '')
+            // CSI sequences without escape char (malformed but common)
+            .replace(/\[[?!><]?[0-9;]*[a-zA-Z]/g, '')
+            // OSC (Operating System Command) sequences
+            .replace(/\x1b\][0-9;]*[^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+            // OSC sequences without proper termination
+            .replace(/\x1b\][^\x07\x1b]*\x07/g, '')
+            // Device Control String sequences
+            .replace(/\x1bP[^\\]*(?:\\|\x1b\\)/g, '')
+            // Application Program Command sequences  
+            .replace(/\x1b_[^\\]*(?:\\|\x1b\\)/g, '')
+            // Privacy Message sequences
+            .replace(/\x1b\^[^\\]*(?:\\|\x1b\\)/g, '')
+            // Start of String sequences
+            .replace(/\x1bX[^\\]*(?:\\|\x1b\\)/g, '')
+            // Single character escape sequences
+            .replace(/\x1b[ABCDEFGHIJKLMNOPQRSTUVWXYZ]/g, '')
+            .replace(/\x1b[abcdefghijklmnopqrstuvwxyz]/g, '')
+            .replace(/\x1b[0-9]/g, '')
+            // Remove other control characters but preserve newlines and tabs
+            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
+            // Clean up cursor positioning sequences that might be missed
+            .replace(/\x1b\[[HfABCDEFGJKST]/g, '')
+            // Remove terminal mode switches
+            .replace(/\x1b[()][AB012]/g, '')
+            // Clean up any remaining escape sequences with parameters
+            .replace(/\x1b\[[0-9;]*~/g, '')
+            // Remove bell character
+            .replace(/\x07/g, '')
+            // Remove backspace sequences that could break formatting
+            .replace(/\x08+/g, '');
+        
+        // Handle special Unicode box drawing characters that may appear garbled
+        // Convert common box drawing to ASCII equivalents for better web compatibility
+        cleaned = cleaned
+            .replace(/[╭╮╰╯]/g, '+')     // Box drawing corners -> plus
+            .replace(/[─━]/g, '-')       // Horizontal lines -> dash  
+            .replace(/[│┃]/g, '|')       // Vertical lines -> pipe
+            .replace(/[├┤┬┴┼]/g, '+')    // Box drawing connections -> plus
+            .replace(/[┌┐└┘]/g, '+');    // Other corners -> plus
+        
+        // Clean up excessive whitespace but preserve intentional spacing
+        cleaned = cleaned.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        
+        return cleaned;
     }
 }
 
