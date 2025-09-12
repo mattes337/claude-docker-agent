@@ -159,11 +159,11 @@ class SessionManager extends EventEmitter {
             // Create and start container
             await this.createContainer(session);
             
-            // Initialize Claude in container
+            // Initialize Claude in container and auto-start
             await this.initializeClaude(session);
             
             session.status = 'running';
-            session.state = 'waiting_input';
+            // State will be updated by the auto-start executeCommand call
             
             this.emit('sessionReady', session);
             
@@ -313,11 +313,11 @@ class SessionManager extends EventEmitter {
             
             this.addOutput(session.id, '✅ Container created and started\n', 'success');
             
-            // Fix permissions for Claude CLI directory
+            // Fix permissions for Claude CLI files
             try {
                 const { exec } = await this.dockerService.execCommand(
                     session.id,
-                    ['chown', '-R', 'claude:claude', '/home/claude/.claude'],
+                    ['chown', '-R', 'claude:claude', '/home/claude/.claude*'],
                     { user: 'root' }
                 );
                 await exec.inspect();
@@ -338,22 +338,43 @@ class SessionManager extends EventEmitter {
             this.addOutput(session.id, '🤖 Initializing Claude Code...\n', 'system');
             this.addOutput(session.id, '═══════════════════════════════════════\n\n', 'system');
             
-            // Pre-configure Claude theme to avoid interactive setup
+            // Pre-configure Claude settings to avoid interactive setup
             try {
-                const { exec } = await this.dockerService.execCommand(
+                // Initialize config by running a simple config command that creates the config structure
+                const { exec: initExec } = await this.dockerService.execCommand(
+                    session.id,
+                    ['claude', 'config', 'list', '-g'],
+                    { user: 'claude' }
+                );
+                await initExec.inspect();
+                
+                // Set the theme globally to persist between commands
+                const { exec: themeExec } = await this.dockerService.execCommand(
                     session.id,
                     ['claude', 'config', 'set', '-g', 'theme', 'dark'],
                     { user: 'claude' }
                 );
-                await exec.inspect();
-                this.addOutput(session.id, '🎨 Claude theme configured\n', 'success');
+                await themeExec.inspect();
+                
+                // Ensure config files have proper permissions
+                const { exec: permExec } = await this.dockerService.execCommand(
+                    session.id,
+                    ['chown', 'claude:claude', '/home/claude/.claude.json*'],
+                    { user: 'root' }
+                );
+                await permExec.inspect();
+                
+                this.addOutput(session.id, '🎨 Claude configuration initialized\n', 'success');
             } catch (error) {
-                console.warn('Failed to set Claude theme:', error.message);
-                this.addOutput(session.id, '⚠️ Theme configuration skipped\n', 'warning');
+                console.warn('Failed to initialize Claude configuration:', error.message);
+                this.addOutput(session.id, '⚠️ Configuration initialization skipped\n', 'warning');
             }
             
             this.addOutput(session.id, '✅ Claude Code ready for commands\n', 'success');
-            this.addOutput(session.id, '💬 Send your requests to execute them\n', 'info');
+            this.addOutput(session.id, '🚀 Starting Claude automatically...\n', 'info');
+            
+            // Automatically start Claude with a greeting message and bypass theme selection
+            await this.executeCommand(session.id, 'Hello! I\'m ready to help you with your development tasks. What would you like to work on?', { autoStart: true });
             
         } catch (error) {
             throw new Error(`Failed to initialize Claude: ${error.message}`);
@@ -366,8 +387,8 @@ class SessionManager extends EventEmitter {
             return { success: false, error: 'Session not found' };
         }
 
-        // Check if already processing
-        if (session.processingMessage) {
+        // Check if already processing (skip for autoStart to avoid blocking initialization)
+        if (session.processingMessage && !options.autoStart) {
             session.messageQueue.push({ prompt, options });
             this.addOutput(sessionId, '⏳ Message queued (currently processing another request)\n', 'info');
             return { success: true, queued: true };
@@ -378,8 +399,13 @@ class SessionManager extends EventEmitter {
         session.lastActivity = new Date();
 
         try {
-            this.addOutput(sessionId, `\n👤 You: ${prompt}\n\n`, 'user');
-            this.addOutput(sessionId, '🔄 Processing with Claude Code...\n', 'system');
+            // Only show user prompt for non-autoStart commands
+            if (!options.autoStart) {
+                this.addOutput(sessionId, `\n👤 You: ${prompt}\n\n`, 'user');
+                this.addOutput(sessionId, '🔄 Processing with Claude Code...\n', 'system');
+            } else {
+                this.addOutput(sessionId, '🔄 Auto-starting Claude session...\n', 'system');
+            }
 
             // Execute Claude command in container with TTY to capture CLI UI output
             const claudeArgs = [
@@ -415,7 +441,7 @@ class SessionManager extends EventEmitter {
                     
                     // For TTY mode, we get raw terminal output
                     // Clean ANSI escape codes for web display but preserve structure
-                    const cleanData = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''); // Remove ANSI escape sequences
+                    const cleanData = this.cleanAnsiEscapeSequences(data);
                     
                     if (cleanData.trim()) {
                         // Process data and add to output with real-time streaming
@@ -782,6 +808,69 @@ class SessionManager extends EventEmitter {
         await this.forceCleanupOrphanedContainers();
         
         console.log('✅ All sessions stopped and cleaned up');
+    }
+
+    /**
+     * Selective ANSI escape sequence cleaning for web-safe terminal output
+     * Preserves color codes but removes terminal control sequences
+     */
+    cleanAnsiEscapeSequences(text) {
+        if (!text) return text;
+        
+        let cleaned = text;
+        
+        // Remove non-color ANSI escape sequences but preserve SGR (color) codes
+        cleaned = cleaned
+            // Cursor positioning and movement (but not SGR color codes)
+            .replace(/\x1b\[[\d;]*[HfABCDEFGJKSTusp]/g, '')
+            // Clear screen and erase sequences
+            .replace(/\x1b\[[\d]*[JK]/g, '')
+            // Screen mode changes
+            .replace(/\x1b\[\?[\d;]*[hl]/g, '')
+            // CSI sequences without escape char (malformed but common) - except SGR
+            .replace(/\[[?!><][\d;]*[A-LN-Za-ln-z]/g, '') // Exclude M and m (SGR)
+            // OSC (Operating System Command) sequences
+            .replace(/\x1b\][0-9;]*[^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+            // OSC sequences without proper termination
+            .replace(/\x1b\][^\x07\x1b]*\x07/g, '')
+            // Device Control String sequences
+            .replace(/\x1bP[^\\]*(?:\\|\x1b\\)/g, '')
+            // Application Program Command sequences  
+            .replace(/\x1b_[^\\]*(?:\\|\x1b\\)/g, '')
+            // Privacy Message sequences
+            .replace(/\x1b\^[^\\]*(?:\\|\x1b\\)/g, '')
+            // Start of String sequences
+            .replace(/\x1bX[^\\]*(?:\\|\x1b\\)/g, '')
+            // Single character escape sequences (but not SGR)
+            .replace(/\x1b[ABCDEFGHIJKLNOPQRSTUVWXYZ]/g, '') // Exclude M
+            .replace(/\x1b[abcdefghijklnopqrstuvwxyz]/g, '') // Exclude m
+            .replace(/\x1b[0-9]/g, '')
+            // Remove other control characters but preserve newlines and tabs
+            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
+            // Remove terminal mode switches
+            .replace(/\x1b[()][AB012]/g, '')
+            // Remove bell character
+            .replace(/\x07/g, '')
+            // Remove backspace sequences that could break formatting
+            .replace(/\x08+/g, '');
+            
+        // PRESERVE SGR (Select Graphic Rendition) codes for color rendering
+        // These include: \x1b[...m sequences for colors, bold, italic, etc.
+        // Our ANSI renderer in the frontend will handle these properly
+        
+        // Handle special Unicode box drawing characters that may appear garbled
+        // Convert common box drawing to ASCII equivalents for better web compatibility
+        cleaned = cleaned
+            .replace(/[╭╮╰╯]/g, '+')     // Box drawing corners -> plus
+            .replace(/[─━]/g, '-')       // Horizontal lines -> dash  
+            .replace(/[│┃]/g, '|')       // Vertical lines -> pipe
+            .replace(/[├┤┬┴┼]/g, '+')    // Box drawing connections -> plus
+            .replace(/[┌┐└┘]/g, '+');    // Other corners -> plus
+        
+        // Clean up excessive whitespace but preserve intentional spacing
+        cleaned = cleaned.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        
+        return cleaned;
     }
 }
 

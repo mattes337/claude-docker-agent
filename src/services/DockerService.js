@@ -190,21 +190,22 @@ class DockerService {
         }
 
         try {
-            // Get the Claude directory path
-            const claudeDir = path.join(os.homedir(), '.claude');
+            console.log(`📋 Copying Claude configuration to container ${sessionId}...`);
 
-            // Check if Claude directory exists
-            if (!await fs.pathExists(claudeDir)) {
-                console.warn('⚠️ Claude credentials directory not found. Please ensure Claude CLI is set up.');
-                return;
-            }
-
-            console.log(`📋 Copying Claude credentials to container ${sessionId}...`);
-
-            // Create tar archive of .claude directory
+            // Create tar archive of Claude configuration files
             const pack = tar.pack();
+            const homeDir = os.homedir();
+            
+            // List of Claude configuration files and directories to copy
+            const claudeItems = [
+                '.claude',      // Directory with various Claude data
+                '.claude.json', // Main configuration file
+                '.claude.json.backup' // Backup configuration file
+            ];
+            
+            let copiedAny = false;
 
-            // Add all files from .claude directory
+            // Add all Claude-related files and directories
             const addDirectoryToTar = async (dirPath, tarPath = '') => {
                 const items = await fs.readdir(dirPath);
 
@@ -221,17 +222,37 @@ class DockerService {
                     }
                 }
             };
+            
+            // Copy each Claude configuration item if it exists
+            for (const item of claudeItems) {
+                const itemPath = path.join(homeDir, item);
+                if (await fs.pathExists(itemPath)) {
+                    const stats = await fs.stat(itemPath);
+                    
+                    if (stats.isDirectory()) {
+                        await addDirectoryToTar(itemPath, item);
+                    } else {
+                        const content = await fs.readFile(itemPath);
+                        pack.entry({ name: item }, content);
+                    }
+                    copiedAny = true;
+                }
+            }
+            
+            if (!copiedAny) {
+                console.warn('⚠️ No Claude configuration found. Claude CLI will need to be set up in container.');
+                return;
+            }
 
-            await addDirectoryToTar(claudeDir);
             pack.finalize();
 
             // Copy to container's home directory
             await container.putArchive(pack, { path: '/home/claude' });
 
-            console.log(`✅ Claude credentials copied to container ${sessionId}`);
+            console.log(`✅ Claude configuration copied to container ${sessionId}`);
 
         } catch (error) {
-            console.error(`❌ Failed to copy Claude credentials: ${error.message}`);
+            console.error(`❌ Failed to copy Claude configuration: ${error.message}`);
             // Don't throw error - container can still work without credentials for testing
         }
     }
