@@ -251,9 +251,7 @@ class NodePtySessionManager extends EventEmitter {
             // Build Claude command
             const claudeArgs = [
                 'claude',
-                '--print',
                 '--dangerously-skip-permissions',
-                '--output-format', options.outputFormat || 'text',
                 prompt,
                 ...session.config.claudeArgs
             ];

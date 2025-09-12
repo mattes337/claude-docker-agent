@@ -301,8 +301,7 @@ class SessionManager extends EventEmitter {
             const containerConfig = {
                 ...session.config,
                 binds: [
-                    `${session.workDir}:/workspace`,
-                    `${process.env.HOME}/.claude:/home/claude/.claude`
+                    `${session.workDir}:/workspace`
                 ],
                 cmd: ['bash', '-l']
             };
@@ -339,7 +338,20 @@ class SessionManager extends EventEmitter {
             this.addOutput(session.id, '🤖 Initializing Claude Code...\n', 'system');
             this.addOutput(session.id, '═══════════════════════════════════════\n\n', 'system');
             
-            // Claude will be initialized when first command is sent
+            // Pre-configure Claude theme to avoid interactive setup
+            try {
+                const { exec } = await this.dockerService.execCommand(
+                    session.id,
+                    ['claude', 'config', 'set', '-g', 'theme', 'dark'],
+                    { user: 'claude' }
+                );
+                await exec.inspect();
+                this.addOutput(session.id, '🎨 Claude theme configured\n', 'success');
+            } catch (error) {
+                console.warn('Failed to set Claude theme:', error.message);
+                this.addOutput(session.id, '⚠️ Theme configuration skipped\n', 'warning');
+            }
+            
             this.addOutput(session.id, '✅ Claude Code ready for commands\n', 'success');
             this.addOutput(session.id, '💬 Send your requests to execute them\n', 'info');
             
@@ -369,12 +381,10 @@ class SessionManager extends EventEmitter {
             this.addOutput(sessionId, `\n👤 You: ${prompt}\n\n`, 'user');
             this.addOutput(sessionId, '🔄 Processing with Claude Code...\n', 'system');
 
-            // Execute Claude command in container with output redirection for docker logs
+            // Execute Claude command in container with TTY to capture CLI UI output
             const claudeArgs = [
                 'claude',
-                '--print',
                 '--dangerously-skip-permissions',
-                '--output-format', options.outputFormat || 'text',
                 prompt,
                 ...session.config.claudeArgs
             ];
@@ -383,16 +393,16 @@ class SessionManager extends EventEmitter {
                 claudeArgs.push('--resume', session.conversationId);
             }
 
-            // Wrap the command to ensure output goes to both exec stream and container logs
+            // Use TTY mode to capture the full CLI UI experience
             const wrappedCommand = [
                 'bash', '-c',
-                `${claudeArgs.join(' ')} 2>&1 | tee /proc/1/fd/1`
+                `export TERM=xterm-256color && ${claudeArgs.join(' ')}`
             ];
 
             const { exec, stream } = await this.dockerService.execCommand(
                 sessionId, 
                 wrappedCommand,
-                { interactive: false, tty: false }
+                { interactive: true, tty: true }
             );
 
             // Handle output and wait for completion with proper encoding
@@ -400,39 +410,22 @@ class SessionManager extends EventEmitter {
                 let buffer = Buffer.alloc(0);
                 
                 stream.on('data', (chunk) => {
-                    // Properly handle Docker stream header format
-                    let data;
-                    if (chunk.length >= 8) {
-                        // Docker multiplexed stream format: 8-byte header + payload
-                        // Header format: [stream_type][0][0][0][size_byte_3][size_byte_2][size_byte_1][size_byte_0]
-                        const streamType = chunk[0];
-                        const payloadSize = chunk.readUInt32BE(4);
-                        
-                        if (chunk.length >= 8 + payloadSize) {
-                            // Extract payload and decode as UTF-8
-                            const payload = chunk.slice(8, 8 + payloadSize);
-                            data = payload.toString('utf8');
-                        } else {
-                            // Fallback for incomplete chunks
-                            data = chunk.slice(8).toString('utf8');
-                        }
-                    } else {
-                        // Fallback for non-multiplexed streams
-                        data = chunk.toString('utf8');
-                    }
+                    // Handle TTY output with potential ANSI escape codes
+                    let data = chunk.toString('utf8');
                     
-                    // Clean up any remaining control characters
-                    data = data.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+                    // For TTY mode, we get raw terminal output
+                    // Clean ANSI escape codes for web display but preserve structure
+                    const cleanData = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''); // Remove ANSI escape sequences
                     
-                    if (data.trim()) {
+                    if (cleanData.trim()) {
                         // Process data and add to output with real-time streaming
-                        this.addOutput(sessionId, data, 'claude');
+                        this.addOutput(sessionId, cleanData, 'claude');
                         
-                        // Write to process stdout for logging
+                        // Write to process stdout for logging (with original ANSI codes for terminal)
                         process.stdout.write(`[Session ${sessionId}] ${data}`);
                         
                         // Try to extract conversation ID
-                        const idMatch = data.match(/conversation_id:\s*([a-zA-Z0-9-]+)/);
+                        const idMatch = cleanData.match(/conversation_id:\s*([a-zA-Z0-9-]+)/);
                         if (idMatch) {
                             session.conversationId = idMatch[1];
                         }
