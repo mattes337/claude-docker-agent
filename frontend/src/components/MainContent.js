@@ -8,7 +8,9 @@ const MainContent = ({
   activeSession, 
   onExecuteCommand, 
   onStopSession, 
-  onClearSession 
+  onClearSession,
+  onDeleteSession,
+  onTerminateProcess
 }) => {
   if (!activeSession) {
     return <EmptyState />;
@@ -20,11 +22,13 @@ const MainContent = ({
         session={activeSession}
         onStopSession={onStopSession}
         onClearSession={onClearSession}
+        onDeleteSession={onDeleteSession}
       />
       
       <Terminal
         session={activeSession}
         onExecuteCommand={onExecuteCommand}
+        onTerminateProcess={onTerminateProcess}
       />
     </div>
   );

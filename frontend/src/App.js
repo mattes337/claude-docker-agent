@@ -24,11 +24,13 @@ function App() {
     loadSessions,
     updateSession,
     appendSessionOutput,
+    replaceSessionOutput,
     loadContainers,
-    removeContainer
+    removeContainer,
+    terminateProcess
   } = useSessionManager();
   
-  const { isConnected } = useWebSocket(sessions, activeSessionId, updateSession, appendSessionOutput);
+  const { isConnected, terminateProcess: wsTerminateProcess } = useWebSocket(sessions, activeSessionId, updateSession, appendSessionOutput, replaceSessionOutput);
 
   useEffect(() => {
     loadSessions();
@@ -109,10 +111,29 @@ function App() {
     }
   };
 
+  const handleTerminateProcess = async (force = false) => {
+    if (activeSessionId) {
+      // Use WebSocket for real-time feedback
+      wsTerminateProcess(activeSessionId, force);
+      // Also call HTTP API as fallback
+      return await terminateProcess(activeSessionId, force);
+    }
+    return { success: false, error: 'No active session' };
+  };
+
   const activeSession = activeSessionId ? sessions.get(activeSessionId) : null;
 
-  const handleViewSession = () => {
-    if (activeSessionId) {
+  const handleViewSession = (sessionId = null) => {
+    // If a specific sessionId is passed, use it; otherwise use activeSessionId
+    const targetSessionId = sessionId || activeSessionId;
+    
+    if (targetSessionId) {
+      setActiveSessionId(targetSessionId);
+      setCurrentView('session');
+    } else if (sessions.size > 0) {
+      // If no active session but sessions exist, use the first one
+      const firstSession = Array.from(sessions.values())[0];
+      setActiveSessionId(firstSession.id);
       setCurrentView('session');
     }
   };
@@ -127,7 +148,7 @@ function App() {
         onViewDashboard={handleViewDashboard}
         onViewSession={handleViewSession}
         onViewContainers={handleViewContainers}
-        hasActiveSession={!!activeSessionId}
+        sessions={Array.from(sessions.values())}
       />
       
       {currentView === 'dashboard' ? (
@@ -156,6 +177,8 @@ function App() {
             onExecuteCommand={handleExecuteCommand}
             onStopSession={handleStopSession}
             onClearSession={handleClearSession}
+            onDeleteSession={handleDeleteSession}
+            onTerminateProcess={handleTerminateProcess}
           />
         </div>
       )}

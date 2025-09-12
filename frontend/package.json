@@ -4,15 +4,22 @@
   "description": "React frontend for Claude Docker Agent",
   "private": true,
   "dependencies": {
+    "@llm-ui/code": "^0.13.3",
+    "@llm-ui/markdown": "^0.13.3",
+    "@llm-ui/react": "^0.13.3",
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^14.5.2",
+    "clsx": "^2.0.0",
+    "html-react-parser": "^5.2.6",
+    "lucide-react": "^0.294.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
     "react-scripts": "5.0.1",
-    "web-vitals": "^2.1.4",
-    "lucide-react": "^0.294.0",
-    "clsx": "^2.0.0"
+    "remark-gfm": "^4.0.1",
+    "shiki": "^1.29.2",
+    "web-vitals": "^2.1.4"
   },
   "scripts": {
     "start": "react-scripts start",

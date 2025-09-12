@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 
-export const useWebSocket = (sessions, activeSessionId, updateSession, appendSessionOutput) => {
+export const useWebSocket = (sessions, activeSessionId, updateSession, appendSessionOutput, replaceSessionOutput) => {
   const [isConnected, setIsConnected] = useState(false);
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -30,7 +30,7 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
       wsRef.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          handleWebSocketMessage(data, updateSession, appendSessionOutput);
+          handleWebSocketMessage(data, updateSession, appendSessionOutput, replaceSessionOutput);
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
         }
@@ -60,7 +60,7 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
     }
   };
 
-  const handleWebSocketMessage = (data, updateSession, appendSessionOutput) => {
+  const handleWebSocketMessage = (data, updateSession, appendSessionOutput, replaceSessionOutput) => {
     switch (data.type) {
       case 'session_created':
         console.log('Session created:', data.session);
@@ -75,6 +75,14 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
         // Handle real-time output streaming
         if (data.sessionId && data.output) {
           appendSessionOutput(data.sessionId, data.output, data.rawOutput);
+        }
+        break;
+        
+      case 'output_replace':
+        // Handle screen replacement for Claude Code interface
+        if (data.sessionId && data.output !== undefined && replaceSessionOutput) {
+          console.log('Screen replacement detected for session:', data.sessionId);
+          replaceSessionOutput(data.sessionId, data.output, data.rawOutput);
         }
         break;
       
@@ -114,6 +122,13 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
         }
         break;
       
+      case 'terminate_result':
+        console.log('Process termination result:', data);
+        if (data.result?.success) {
+          updateSession(data.sessionId, { state: 'waiting_input' });
+        }
+        break;
+      
       default:
         console.log('Unknown WebSocket message type:', data.type);
     }
@@ -142,5 +157,19 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
     }
   }, [activeSessionId]);
 
-  return { isConnected };
+  const sendMessage = (message) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(message));
+    }
+  };
+
+  const terminateProcess = (sessionId, force = false) => {
+    sendMessage({
+      type: 'terminate_process',
+      sessionId,
+      force
+    });
+  };
+
+  return { isConnected, sendMessage, terminateProcess };
 };

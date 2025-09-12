@@ -211,6 +211,48 @@ export const useSessionManager = () => {
     });
   }, []);
 
+  const replaceSessionOutput = useCallback((sessionId, output, rawOutput) => {
+    setSessions(prev => {
+      const newSessions = new Map(prev);
+      const session = newSessions.get(sessionId);
+      
+      // Handle different output formats
+      let outputString = '';
+      if (typeof output === 'string') {
+        outputString = output;
+      } else if (output && typeof output === 'object') {
+        // Handle output objects with data/content properties
+        if (output.data !== undefined) {
+          outputString = String(output.data);
+        } else if (output.content !== undefined) {
+          outputString = String(output.content);
+        } else if (output.message !== undefined) {
+          outputString = String(output.message);
+        } else {
+          outputString = JSON.stringify(output);
+        }
+      } else {
+        outputString = String(output);
+      }
+      
+      if (session) {
+        // Replace the entire output instead of appending
+        session.output = outputString;
+        
+        // Replace raw output array
+        session.rawOutput = rawOutput ? [rawOutput] : [];
+      } else {
+        // Create session if it doesn't exist
+        newSessions.set(sessionId, {
+          id: sessionId,
+          output: outputString,
+          rawOutput: rawOutput ? [rawOutput] : []
+        });
+      }
+      return newSessions;
+    });
+  }, []);
+
   const loadContainers = useCallback(async () => {
     const result = await apiCall('/sessions/containers');
     return result;
@@ -220,6 +262,26 @@ export const useSessionManager = () => {
     const result = await apiCall(`/sessions/containers/${containerId}`, {
       method: 'DELETE'
     });
+    return result;
+  }, []);
+
+  const terminateProcess = useCallback(async (sessionId, force = false) => {
+    const result = await apiCall(`/sessions/${sessionId}/terminate`, {
+      method: 'POST',
+      body: JSON.stringify({ force })
+    });
+
+    if (result.success) {
+      setSessions(prev => {
+        const newSessions = new Map(prev);
+        const session = newSessions.get(sessionId);
+        if (session) {
+          session.state = 'waiting_input';
+        }
+        return newSessions;
+      });
+    }
+
     return result;
   }, []);
 
@@ -233,7 +295,9 @@ export const useSessionManager = () => {
     getSessionOutput,
     updateSession,
     appendSessionOutput,
+    replaceSessionOutput,
     loadContainers,
-    removeContainer
+    removeContainer,
+    terminateProcess
   };
 };

@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Send, Loader, Square } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import ansiRenderer from '../utils/ansiRenderer';
+import LLMMessage from './LLMMessage';
 import './Terminal.css';
 
 const Terminal = ({ session, onExecuteCommand, onTerminateProcess }) => {
@@ -365,41 +364,20 @@ const Terminal = ({ session, onExecuteCommand, onTerminateProcess }) => {
             <div key={line.key} className={`terminal-line streaming ${line.type}`}>
               {line.type === 'welcome' ? (
                 <div className="welcome-message">
-                  <ReactMarkdown 
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      h1: ({ children }) => <h1 className="welcome-title">{children}</h1>,
-                      h2: ({ children }) => <h2 className="welcome-subtitle">{children}</h2>,
-                      ul: ({ children }) => <ul className="welcome-list">{children}</ul>,
-                      li: ({ children }) => <li className="welcome-list-item">{children}</li>,
-                      p: ({ children }) => <p className="welcome-paragraph">{children}</p>,
-                      strong: ({ children }) => <strong className="welcome-bold">{children}</strong>,
-                      code: ({ children }) => <code className="welcome-code">{children}</code>
-                    }}
-                  >
-                    {line.content}
-                  </ReactMarkdown>
+                  <LLMMessage 
+                    content={line.content} 
+                    isStreaming={false} 
+                  />
                 </div>
               ) : line.type.startsWith('claude-message') ? (
                 <div className={`claude-response ${line.type}`}>
                   {line.type === 'claude-message-start' ? (
                     <div className="claude-message-header">{line.content}</div>
                   ) : line.type === 'claude-message-delta' ? (
-                    <ReactMarkdown 
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        p: ({ children }) => <span className="claude-text">{children}</span>,
-                        code: ({ inline, children }) => 
-                          inline ? <code className="claude-inline-code">{children}</code> : <pre className="claude-code-block"><code>{children}</code></pre>,
-                        strong: ({ children }) => <strong className="claude-bold">{children}</strong>,
-                        em: ({ children }) => <em className="claude-italic">{children}</em>,
-                        ul: ({ children }) => <ul className="claude-list">{children}</ul>,
-                        ol: ({ children }) => <ol className="claude-list">{children}</ol>,
-                        li: ({ children }) => <li className="claude-list-item">{children}</li>
-                      }}
-                    >
-                      {line.content}
-                    </ReactMarkdown>
+                    <LLMMessage 
+                      content={line.content} 
+                      isStreaming={true} 
+                    />
                   ) : (
                     <div className="claude-message-end">{line.content}</div>
                   )}

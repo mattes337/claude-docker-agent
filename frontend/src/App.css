@@ -9,7 +9,7 @@
 .app-main {
   display: flex;
   flex: 1;
-  height: calc(100vh - 80px);
+  height: calc(100vh - 120px);
   overflow: hidden;
 }
 
@@ -18,10 +18,27 @@
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   padding: 20px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  min-height: 80px;
+}
+
+.header-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 80px;
+  margin-bottom: 15px;
+}
+
+.header-navigation {
+  display: flex;
+  justify-content: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 15px;
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 20px;
 }
 
 .header-content {
@@ -72,11 +89,6 @@
   animation: pulse 2s infinite;
 }
 
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
 
 .view-navigation {
   display: flex;
@@ -144,9 +156,13 @@
 @media (max-width: 768px) {
   .header {
     padding: 15px;
+    min-height: auto;
+  }
+  
+  .header-top {
     flex-direction: column;
     gap: 10px;
-    min-height: auto;
+    margin-bottom: 10px;
   }
   
   .header-content {
@@ -159,8 +175,12 @@
     font-size: 20px;
   }
   
+  .header-status {
+    justify-content: center;
+  }
+  
   .app-main {
-    height: calc(100vh - 120px);
+    height: calc(100vh - 140px);
     flex-direction: column;
   }
 }
