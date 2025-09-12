@@ -1,18 +1,134 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Send, Loader, Square } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import ansiRenderer from '../utils/ansiRenderer';
 import './Terminal.css';
 
-const Terminal = ({ session, onExecuteCommand }) => {
+const Terminal = ({ session, onExecuteCommand, onTerminateProcess }) => {
   const [input, setInput] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
+  // Screen replacement mode state
+  const [screenMode, setScreenMode] = useState('append'); // 'append' or 'replace'
+  const [screenBuffer, setScreenBuffer] = useState([]);
+  const [isClaudeRunning, setIsClaudeRunning] = useState(false);
   const outputRef = useRef(null);
   const inputRef = useRef(null);
+  const lastOutputRef = useRef(''); // Track last output for change detection
 
+  // Detect Claude running state and screen clearing sequences
+  const detectClaudeState = useMemo(() => {
+    if (!session.output && !session.rawOutput) return { isClaudeRunning: false, hasScreenClear: false };
+    
+    const output = session.output || '';
+    const rawOutput = session.rawOutput || [];
+    
+    // Check if Claude is running - specifically look for Claude Code interactive interface
+    const claudeRunning = output.includes('Welcome to Claude Code') ||
+                         output.includes('Choose the text style that looks best') ||
+                         rawOutput.some(item => 
+                           item.type === 'claude' || 
+                           (typeof item.data === 'string' && (
+                             item.data.includes('Welcome to Claude Code') ||
+                             item.data.includes('Choose the text style that looks best')
+                           ))
+                         );
+    
+    // Enhanced screen clearing detection - look for the specific patterns that indicate screen replacement
+    // eslint-disable-next-line no-control-regex
+    const screenClearPatterns = [
+      /\x1b\[2J/,     // Clear entire screen
+      /\x1b\[H/,      // Move cursor to home
+      /\x1b\[1;1H/,   // Move cursor to position 1,1
+      /\x1b\[\?2026[hl]/, // Application mode sequences that cause screen replacement
+    ];
+    
+    const hasScreenClear = screenClearPatterns.some(pattern => pattern.test(output)) ||
+                          rawOutput.some(item => 
+                            typeof item.data === 'string' && 
+                            screenClearPatterns.some(pattern => pattern.test(item.data))
+                          ) ||
+                          // Also detect when we have repeating Claude welcome screens (indicates screen replacement)
+                          (output.match(/Welcome to Claude Code/g) || []).length > 1;
+    
+    return { isClaudeRunning: claudeRunning, hasScreenClear };
+  }, [session.output, session.rawOutput]);
+  
+  // Update Claude running state with smooth transitions
+  useEffect(() => {
+    const { isClaudeRunning: newClaudeState } = detectClaudeState;
+    if (newClaudeState !== isClaudeRunning) {
+      setIsClaudeRunning(newClaudeState);
+      // Switch to replace mode when Claude starts running
+      if (newClaudeState) {
+        setScreenMode('replace');
+      } else {
+        // Delay switching back to append mode to avoid flickering
+        setTimeout(() => {
+          setScreenMode('append');
+        }, 2000);
+      }
+    }
+  }, [detectClaudeState, isClaudeRunning]);
+  
+  // Handle screen buffer updates with improved replacement logic
+  useEffect(() => {
+    if (!session.output && !session.rawOutput) {
+      setScreenBuffer([]);
+      return;
+    }
+    
+    const { hasScreenClear, isClaudeRunning } = detectClaudeState;
+    const currentOutput = session.output || '';
+    
+    // Only update if output has actually changed to prevent unnecessary re-renders
+    if (currentOutput === lastOutputRef.current) {
+      return;
+    }
+    
+    // When Claude is running, we want to mirror the screen exactly
+    if (isClaudeRunning) {
+      // Extract the latest screen state by looking at the most recent complete screen
+      let screenContent = currentOutput;
+      
+      // If we detect screen clearing or repeated welcome screens, extract the latest screen
+      if (hasScreenClear || (currentOutput.match(/Welcome to Claude Code/g) || []).length > 1) {
+        // Find the last occurrence of the welcome screen to get the latest state
+        const welcomeScreens = currentOutput.split('Welcome to Claude Code');
+        if (welcomeScreens.length > 1) {
+          // Take the last screen content
+          screenContent = 'Welcome to Claude Code' + welcomeScreens[welcomeScreens.length - 1];
+        }
+      }
+      
+      // Format and replace the entire buffer with the current screen state
+      const newBuffer = formatOutput(screenContent, session.rawOutput);
+      setScreenBuffer(newBuffer);
+    } else {
+      // Normal append mode for non-Claude output
+      const newBuffer = formatOutput(currentOutput, session.rawOutput);
+      setScreenBuffer(newBuffer);
+    }
+    
+    lastOutputRef.current = currentOutput;
+  }, [session.output, session.rawOutput, screenMode, detectClaudeState]);
+  
+  // Auto-scroll to bottom when new content appears
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-  }, [session.output]);
+  }, [screenBuffer]);
+  
+  // Reset screen mode when session changes
+  useEffect(() => {
+    if (session?.id) {
+      setScreenMode('append');
+      setIsClaudeRunning(false);
+      setScreenBuffer([]);
+      lastOutputRef.current = '';
+    }
+  }, [session?.id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -39,11 +155,40 @@ const Terminal = ({ session, onExecuteCommand }) => {
     }
   };
 
+  const handleTerminate = async () => {
+    if (onTerminateProcess) {
+      try {
+        await onTerminateProcess(false); // graceful termination
+        setIsExecuting(false);
+      } catch (error) {
+        console.error('Failed to terminate process:', error);
+      }
+    }
+  };
+
   const formatOutput = (output, rawOutput) => {
+    // Process ANSI escape sequences for proper web display instead of removing them
+    const processANSI = (text) => {
+      if (typeof text !== 'string') return { clean: text, rendered: text };
+      // Backend already cleaned most sequences, just render remaining color codes
+      const rendered = ansiRenderer.render(text);
+      // Also provide cleaned version for content detection
+      const clean = text
+        // eslint-disable-next-line no-control-regex
+        .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+        // eslint-disable-next-line no-control-regex
+        .replace(/\x1b\[\?[0-9]+[hl]/g, '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+      return { clean, rendered };
+    };
+    
     // If we have raw output (array format), use it for better type detection
     if (rawOutput && Array.isArray(rawOutput)) {
       return rawOutput.map((item, index) => {
-        const content = item.data || '';
+        const processed = processANSI(item.data || '');
+        const content = processed.clean;
+        const renderedContent = processed.rendered;
         const backendType = item.type || 'output';
         
         // Map backend types to display types
@@ -53,60 +198,113 @@ const Terminal = ({ session, onExecuteCommand }) => {
         else if (backendType === 'error') displayType = 'error';
         else if (backendType === 'success') displayType = 'success';
         else if (backendType === 'claude') displayType = 'claude';
-        else if (backendType === 'user') displayType = 'command';
+        else if (backendType === 'claude_message_start') displayType = 'claude-message-start';
+        else if (backendType === 'claude_message_delta') displayType = 'claude-message-delta';
+        else if (backendType === 'claude_message_end') displayType = 'claude-message-end';
+        else if (backendType === 'claude_tool') displayType = 'claude-tool';
+        else if (backendType === 'claude_tool_result') displayType = 'claude-tool-result';
+        else if (backendType === 'claude_status') displayType = 'claude-status';
+        else if (backendType === 'claude_raw') displayType = 'claude-raw';
+        else if (backendType === 'welcome') displayType = 'welcome';
+        else if (backendType === 'user') displayType = 'user';
         else if (content.includes('Error:') || content.includes('error:')) displayType = 'error';
         else if (content.includes('Warning:') || content.includes('warning:')) displayType = 'warning';
         else if (content.includes('Success:') || content.includes('✓')) displayType = 'success';
         
-        return { type: displayType, content: content.trim(), key: index };
-      }).filter(line => line.content.length > 0); // Filter out empty lines
+        return { 
+          type: displayType, 
+          content: content.trim(), 
+          renderedContent: renderedContent, // Already processed by processANSI
+          key: index 
+        };
+      }).filter(line => {
+        // Filter out empty lines and system initialization messages for chat interface
+        if (line.content.length === 0) return false;
+        
+        // Hide system setup messages that aren't relevant for chat
+        const hideTypes = ['system', 'git'];
+        if (hideTypes.includes(line.type)) {
+          // But keep important system messages (errors, warnings, etc.)
+          const keepPatterns = ['error', 'warning', 'failed', 'terminated', 'completed', 'stopped'];
+          const shouldKeep = keepPatterns.some(pattern => 
+            line.content.toLowerCase().includes(pattern)
+          );
+          return shouldKeep;
+        }
+        
+        return true;
+      });
     }
     
     // Fallback to string processing
     if (!output) return [];
     
+    // Process the output for ANSI rendering
+    const processedOutput = processANSI(output);
+    const cleanedOutput = processedOutput.clean;
+    const renderedOutput = processedOutput.rendered;
+    
     // If output is an array (from WebSocket), convert to string first
     if (Array.isArray(output)) {
       const outputString = output.map(item => {
-        if (typeof item === 'string') return item;
+        if (typeof item === 'string') return processANSI(item);
         if (typeof item === 'object' && item !== null) {
-          return item.data || item.content || item.message || '';
+          return processANSI(item.data || item.content || item.message || '');
         }
-        return String(item);
-      }).join('');
-      return outputString.split('\n').map((line, index) => {
+        return processANSI(String(item));
+      });
+      
+      const cleanString = outputString.map(p => p.clean).join('');
+      const renderedString = outputString.map(p => p.rendered).join('');
+      
+      return cleanString.split('\n').map((line, index) => {
+        const renderedLine = renderedString.split('\n')[index] || line;
         // Detect different types of output
+        let type = 'output';
         if (line.startsWith('$ ') || line.startsWith('> ')) {
-          return { type: 'command', content: line, key: index };
+          type = 'command';
         } else if (line.includes('Error:') || line.includes('error:')) {
-          return { type: 'error', content: line, key: index };
+          type = 'error';
         } else if (line.includes('Warning:') || line.includes('warning:')) {
-          return { type: 'warning', content: line, key: index };
+          type = 'warning';
         } else if (line.includes('Success:') || line.includes('✓')) {
-          return { type: 'success', content: line, key: index };
-        } else {
-          return { type: 'output', content: line, key: index };
+          type = 'success';
         }
+        
+        return { 
+          type, 
+          content: line, 
+          renderedContent: renderedLine, // Already processed by processANSI
+          key: index 
+        };
       }).filter(line => line.content.trim().length > 0);
     }
     
-    return output.split('\n').map((line, index) => {
+    return cleanedOutput.split('\n').map((line, index) => {
+      const renderedLine = renderedOutput.split('\n')[index] || line;
       // Detect different types of output
+      let type = 'output';
       if (line.startsWith('$ ') || line.startsWith('> ')) {
-        return { type: 'command', content: line, key: index };
+        type = 'command';
       } else if (line.includes('Error:') || line.includes('error:')) {
-        return { type: 'error', content: line, key: index };
+        type = 'error';
       } else if (line.includes('Warning:') || line.includes('warning:')) {
-        return { type: 'warning', content: line, key: index };
+        type = 'warning';
       } else if (line.includes('Success:') || line.includes('✓')) {
-        return { type: 'success', content: line, key: index };
-      } else {
-        return { type: 'output', content: line, key: index };
+        type = 'success';
       }
+      
+      return { 
+        type, 
+        content: line, 
+        renderedContent: renderedLine, // Already processed by processANSI
+        key: index 
+      };
     }).filter(line => line.content.trim().length > 0);
   };
 
-  const outputLines = formatOutput(session.output, session.rawOutput);
+  // Use screen buffer for rendering instead of direct formatting
+  const outputLines = screenBuffer;
 
   return (
     <div className="terminal">
@@ -132,33 +330,102 @@ const Terminal = ({ session, onExecuteCommand }) => {
               Initializing
             </span>
           )}
+          {isClaudeRunning && screenMode === 'replace' && (
+            <span className="status-indicator claude-mode">
+              🤖 Claude Mode
+            </span>
+          )}
+          {isExecuting && (
+            <button 
+              onClick={handleTerminate}
+              className="terminate-btn"
+              title="Terminate running process"
+            >
+              <Square size={14} />
+              Stop
+            </button>
+          )}
         </div>
       </div>
       
-      <div className="terminal-output" ref={outputRef}>
+      <div 
+        className={`terminal-output ${screenMode === 'replace' ? 'claude-mode' : ''}`}
+        ref={outputRef}
+      >
         {outputLines.length === 0 ? (
-          <div className="terminal-welcome">
-            <p>🤖 Claude session ready!</p>
-            <p>Type your commands below to interact with Claude in this containerized environment.</p>
+          <div className="terminal-startup">
+            {session.status === 'initializing' && (
+              <div className="startup-message">
+                <span>Starting container and initializing Claude...</span>
+              </div>
+            )}
           </div>
         ) : (
           outputLines.map((line) => (
-            <div key={line.key} className={`output-line ${line.type}`}>
-              {line.content}
+            <div key={line.key} className={`terminal-line streaming ${line.type}`}>
+              {line.type === 'welcome' ? (
+                <div className="welcome-message">
+                  <ReactMarkdown 
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      h1: ({ children }) => <h1 className="welcome-title">{children}</h1>,
+                      h2: ({ children }) => <h2 className="welcome-subtitle">{children}</h2>,
+                      ul: ({ children }) => <ul className="welcome-list">{children}</ul>,
+                      li: ({ children }) => <li className="welcome-list-item">{children}</li>,
+                      p: ({ children }) => <p className="welcome-paragraph">{children}</p>,
+                      strong: ({ children }) => <strong className="welcome-bold">{children}</strong>,
+                      code: ({ children }) => <code className="welcome-code">{children}</code>
+                    }}
+                  >
+                    {line.content}
+                  </ReactMarkdown>
+                </div>
+              ) : line.type.startsWith('claude-message') ? (
+                <div className={`claude-response ${line.type}`}>
+                  {line.type === 'claude-message-start' ? (
+                    <div className="claude-message-header">{line.content}</div>
+                  ) : line.type === 'claude-message-delta' ? (
+                    <ReactMarkdown 
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        p: ({ children }) => <span className="claude-text">{children}</span>,
+                        code: ({ inline, children }) => 
+                          inline ? <code className="claude-inline-code">{children}</code> : <pre className="claude-code-block"><code>{children}</code></pre>,
+                        strong: ({ children }) => <strong className="claude-bold">{children}</strong>,
+                        em: ({ children }) => <em className="claude-italic">{children}</em>,
+                        ul: ({ children }) => <ul className="claude-list">{children}</ul>,
+                        ol: ({ children }) => <ol className="claude-list">{children}</ol>,
+                        li: ({ children }) => <li className="claude-list-item">{children}</li>
+                      }}
+                    >
+                      {line.content}
+                    </ReactMarkdown>
+                  ) : (
+                    <div className="claude-message-end">{line.content}</div>
+                  )}
+                </div>
+              ) : line.renderedContent ? (
+                <div dangerouslySetInnerHTML={{ __html: line.renderedContent }} />
+              ) : (
+                <div className={`output-line ${line.type}`}>
+                  {line.content}
+                </div>
+              )}
             </div>
           ))
         )}
         {isExecuting && (
-          <div className="output-line executing">
-            <Loader size={14} className="spinning" />
-            Executing command...
+          <div className="terminal-line">
+            <div className="claude-thinking">
+              <span>Claude is processing your request...</span>
+            </div>
           </div>
         )}
       </div>
       
       <form className="terminal-input" onSubmit={handleSubmit}>
         <div className="input-wrapper">
-          <span className="prompt">$</span>
+          <span className="prompt">claude&gt;</span>
           <input
             ref={inputRef}
             type="text"

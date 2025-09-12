@@ -156,6 +156,27 @@ module.exports = (sessionManager) => {
                 const { lines, offset } = req.query;
                 let output = session.output;
                 
+                // Filter out system setup messages that aren't relevant for chat interface
+                if (Array.isArray(output)) {
+                    output = output.filter(item => {
+                        const type = item.type || 'output';
+                        
+                        // Hide system setup messages that aren't relevant for chat
+                        const hideTypes = ['system', 'git'];
+                        if (hideTypes.includes(type)) {
+                            // But keep important system messages (errors, warnings, etc.)
+                            const content = item.data || '';
+                            const keepPatterns = ['error', 'warning', 'failed', 'terminated', 'completed', 'stopped'];
+                            const shouldKeep = keepPatterns.some(pattern => 
+                                content.toLowerCase().includes(pattern)
+                            );
+                            return shouldKeep;
+                        }
+                        
+                        return true;
+                    });
+                }
+                
                 // Apply offset if specified
                 if (offset && !isNaN(offset)) {
                     output = output.slice(parseInt(offset));
@@ -437,6 +458,28 @@ module.exports = (sessionManager) => {
                     success: true,
                     message: 'Session output cleared'
                 });
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+    );
+
+    // Terminate Claude process
+    router.post('/:id/terminate',
+        [
+            param('id').isUUID().withMessage('Invalid session ID'),
+            body('force').optional().isBoolean()
+        ],
+        handleValidationErrors,
+        async (req, res) => {
+            try {
+                const { force = false } = req.body;
+                const result = await sessionManager.terminateClaudeProcess(req.params.id, force);
+                
+                res.json(result);
             } catch (error) {
                 res.status(500).json({
                     success: false,

@@ -126,6 +126,7 @@ class SessionManager extends EventEmitter {
             container: null,
             claudeProcess: null,
             conversationId: null,
+            hasStartedConversation: false,
             messageQueue: [],
             processingMessage: false,
             config: {
@@ -159,12 +160,12 @@ class SessionManager extends EventEmitter {
             // Create and start container
             await this.createContainer(session);
             
-            // Initialize Claude in container and auto-start
+            // Initialize Claude in container
             await this.initializeClaude(session);
             
+            // Set session to running after successful initialization
             session.status = 'running';
-            // State will be updated by the auto-start executeCommand call
-            
+            session.state = 'waiting_input';
             this.emit('sessionReady', session);
             
             return {
@@ -356,10 +357,18 @@ class SessionManager extends EventEmitter {
                 );
                 await themeExec.inspect();
                 
-                // Ensure config files have proper permissions
+                // Ensure Claude directory structure exists and has proper permissions
+                const { exec: mkdirExec } = await this.dockerService.execCommand(
+                    session.id,
+                    ['mkdir', '-p', '/home/claude/.claude/plugins/repos'],
+                    { user: 'root' }
+                );
+                await mkdirExec.inspect();
+                
+                // Set proper ownership for entire .claude directory
                 const { exec: permExec } = await this.dockerService.execCommand(
                     session.id,
-                    ['chown', 'claude:claude', '/home/claude/.claude.json*'],
+                    ['chown', '-R', 'claude:claude', '/home/claude/.claude'],
                     { user: 'root' }
                 );
                 await permExec.inspect();
@@ -370,11 +379,11 @@ class SessionManager extends EventEmitter {
                 this.addOutput(session.id, '⚠️ Configuration initialization skipped\n', 'warning');
             }
             
-            this.addOutput(session.id, '✅ Claude Code ready for commands\n', 'success');
-            this.addOutput(session.id, '🚀 Starting Claude automatically...\n', 'info');
-            
-            // Automatically start Claude with a greeting message and bypass theme selection
-            await this.executeCommand(session.id, 'Hello! I\'m ready to help you with your development tasks. What would you like to work on?', { autoStart: true });
+            // Only add welcome message if we haven't already added one
+            const hasWelcomeMessage = session.output.some(output => output.type === 'welcome');
+            if (!hasWelcomeMessage) {
+                this.addFormattedOutput(session.id, this.getWelcomeMessage(), 'welcome');
+            }
             
         } catch (error) {
             throw new Error(`Failed to initialize Claude: ${error.message}`);
@@ -387,10 +396,10 @@ class SessionManager extends EventEmitter {
             return { success: false, error: 'Session not found' };
         }
 
-        // Check if already processing (skip for autoStart to avoid blocking initialization)
-        if (session.processingMessage && !options.autoStart) {
+        // Check if already processing
+        if (session.processingMessage) {
             session.messageQueue.push({ prompt, options });
-            this.addOutput(sessionId, '⏳ Message queued (currently processing another request)\n', 'info');
+            this.addFormattedOutput(sessionId, '⏳ Message queued (currently processing another request)\n', 'info');
             return { success: true, queued: true };
         }
 
@@ -399,74 +408,117 @@ class SessionManager extends EventEmitter {
         session.lastActivity = new Date();
 
         try {
-            // Only show user prompt for non-autoStart commands
-            if (!options.autoStart) {
-                this.addOutput(sessionId, `\n👤 You: ${prompt}\n\n`, 'user');
-                this.addOutput(sessionId, '🔄 Processing with Claude Code...\n', 'system');
-            } else {
-                this.addOutput(sessionId, '🔄 Auto-starting Claude session...\n', 'system');
-            }
+            this.addFormattedOutput(sessionId, `\n👤 You: ${prompt}\n\n`, 'user');
+            this.addFormattedOutput(sessionId, '🔄 Processing with Claude Code...\n', 'system');
 
-            // Execute Claude command in container with TTY to capture CLI UI output
+            // Build Claude command with stream-json output format
             const claudeArgs = [
                 'claude',
-                '--dangerously-skip-permissions',
-                prompt,
+                '-p', prompt,
+                '--include-partial-messages',
+                '--print',
+                '--output-format=stream-json',
+                '--verbose',
                 ...session.config.claudeArgs
             ];
 
-            if (session.conversationId) {
-                claudeArgs.push('--resume', session.conversationId);
+            // For continuations, use the Claude session ID if available
+            if (session.hasStartedConversation && session.claudeSessionId) {
+                claudeArgs.push('-r', session.claudeSessionId);
             }
 
-            // Use TTY mode to capture the full CLI UI experience
-            const wrappedCommand = [
-                'bash', '-c',
-                `export TERM=xterm-256color && ${claudeArgs.join(' ')}`
-            ];
-
+            // Execute Claude command in container
             const { exec, stream } = await this.dockerService.execCommand(
                 sessionId, 
-                wrappedCommand,
-                { interactive: true, tty: true }
+                claudeArgs,
+                { interactive: false, tty: false }
             );
 
-            // Handle output and wait for completion with proper encoding
+            // Store process reference for termination capability
+            session.claudeProcess = exec;
+
+            // Handle JSON streaming output
+            let buffer = '';
             await new Promise((resolve, reject) => {
-                let buffer = Buffer.alloc(0);
-                
                 stream.on('data', (chunk) => {
-                    // Handle TTY output with potential ANSI escape codes
-                    let data = chunk.toString('utf8');
+                    buffer += chunk.toString('utf8');
                     
-                    // For TTY mode, we get raw terminal output
-                    // Clean ANSI escape codes for web display but preserve structure
-                    const cleanData = this.cleanAnsiEscapeSequences(data);
+                    // Process complete JSON lines
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // Keep incomplete line in buffer
                     
-                    if (cleanData.trim()) {
-                        // Process data and add to output with real-time streaming
-                        this.addOutput(sessionId, cleanData, 'claude');
-                        
-                        // Write to process stdout for logging (with original ANSI codes for terminal)
-                        process.stdout.write(`[Session ${sessionId}] ${data}`);
-                        
-                        // Try to extract conversation ID
-                        const idMatch = cleanData.match(/conversation_id:\s*([a-zA-Z0-9-]+)/);
-                        if (idMatch) {
-                            session.conversationId = idMatch[1];
+                    lines.forEach(line => {
+                        line = line.trim();
+                        if (line) {
+                            // Try to find JSON in the line by looking for { or [
+                            let jsonStart = -1;
+                            for (let i = 0; i < line.length; i++) {
+                                if (line[i] === '{' || line[i] === '[') {
+                                    jsonStart = i;
+                                    break;
+                                }
+                            }
+                            
+                            if (jsonStart >= 0) {
+                                const jsonPart = line.substring(jsonStart);
+                                try {
+                                    const jsonData = JSON.parse(jsonPart);
+                                    this.handleClaudeJsonOutput(sessionId, jsonData);
+                                } catch (parseError) {
+                                    // If JSON parsing fails, check if there's non-JSON content
+                                    const prefix = line.substring(0, jsonStart);
+                                    if (prefix.trim()) {
+                                        // There's non-JSON content before the JSON, add it as regular output
+                                        this.addFormattedOutput(sessionId, prefix.trim(), 'claude_raw');
+                                    }
+                                    console.warn(`[Session ${sessionId}] JSON parse error:`, parseError.message);
+                                }
+                            } else {
+                                // No JSON found, treat as regular output
+                                this.addFormattedOutput(sessionId, line, 'claude_raw');
+                            }
                         }
-                    }
+                    });
                 });
 
                 stream.on('end', async () => {
                     try {
                         console.log(`[Session ${sessionId}] Command completed`);
                         
+                        // Process any remaining buffer
+                        if (buffer.trim()) {
+                            const line = buffer.trim();
+                            // Try to find JSON in the remaining buffer
+                            let jsonStart = -1;
+                            for (let i = 0; i < line.length; i++) {
+                                if (line[i] === '{' || line[i] === '[') {
+                                    jsonStart = i;
+                                    break;
+                                }
+                            }
+                            
+                            if (jsonStart >= 0) {
+                                const jsonPart = line.substring(jsonStart);
+                                try {
+                                    const jsonData = JSON.parse(jsonPart);
+                                    this.handleClaudeJsonOutput(sessionId, jsonData);
+                                } catch (parseError) {
+                                    const prefix = line.substring(0, jsonStart);
+                                    if (prefix.trim()) {
+                                        this.addFormattedOutput(sessionId, prefix.trim(), 'claude_raw');
+                                    }
+                                    console.warn(`[Session ${sessionId}] Final buffer JSON parse error:`, parseError.message);
+                                }
+                            } else {
+                                this.addFormattedOutput(sessionId, line, 'claude_raw');
+                            }
+                        }
+                        
                         // Wait for execution to complete and get exit code
                         const result = await exec.inspect();
                         
                         if (result.ExitCode === 0) {
-                            this.addOutput(sessionId, '\n✅ Request completed\n', 'success');
+                            this.addFormattedOutput(sessionId, '\n✅ Request completed\n', 'success');
                             resolve();
                         } else {
                             reject(new Error(`Claude exited with code ${result.ExitCode}`));
@@ -482,6 +534,7 @@ class SessionManager extends EventEmitter {
             });
 
             session.state = 'waiting_input';
+            session.claudeProcess = null;
             
             // Process queued messages
             if (session.messageQueue.length > 0) {
@@ -498,14 +551,65 @@ class SessionManager extends EventEmitter {
         } catch (error) {
             session.processingMessage = false;
             session.state = 'error';
+            session.claudeProcess = null;
             
-            this.addOutput(sessionId, `❌ Error: ${error.message}\n`, 'error');
+            this.addFormattedOutput(sessionId, `❌ Error: ${error.message}\n`, 'error');
             
             // Check for limit reached
             if (error.message.includes('usage limit reached')) {
                 this.autoResumeManager.handleLimitReached(sessionId, error.message);
             }
             
+            return { success: false, error: error.message };
+        }
+    }
+
+    async terminateClaudeProcess(sessionId, force = false) {
+        const session = this.sessions.get(sessionId);
+        if (!session) {
+            return { success: false, error: 'Session not found' };
+        }
+
+        if (!session.claudeProcess || !session.processingMessage) {
+            return { success: false, error: 'No Claude process running' };
+        }
+
+        try {
+            this.addFormattedOutput(sessionId, '🛑 Terminating Claude process...\n', 'system');
+            
+            // Try graceful termination first
+            await this.dockerService.execCommand(sessionId, ['pkill', '-TERM', '-f', 'claude'], { user: 'claude' });
+            
+            // Wait a moment, then force kill if requested
+            if (force) {
+                setTimeout(async () => {
+                    try {
+                        await this.dockerService.execCommand(sessionId, ['pkill', '-9', '-f', 'claude'], { user: 'claude' });
+                    } catch (killError) {
+                        console.warn('Force kill failed:', killError.message);
+                    }
+                }, 2000);
+            }
+            
+            // Reset session state
+            session.claudeProcess = null;
+            session.processingMessage = false;
+            session.state = 'waiting_input';
+            
+            this.addFormattedOutput(sessionId, '✅ Claude process terminated\n', 'success');
+            
+            // Process any queued messages
+            if (session.messageQueue.length > 0) {
+                const nextMessage = session.messageQueue.shift();
+                setTimeout(() => {
+                    this.executeCommand(sessionId, nextMessage.prompt, nextMessage.options);
+                }, 1000);
+            }
+            
+            return { success: true };
+            
+        } catch (error) {
+            this.addFormattedOutput(sessionId, `❌ Failed to terminate process: ${error.message}\n`, 'error');
             return { success: false, error: error.message };
         }
     }
@@ -517,7 +621,31 @@ class SessionManager extends EventEmitter {
         }
 
         try {
-            this.addOutput(sessionId, '🛑 Stopping session...\n', 'system');
+            this.addFormattedOutput(sessionId, '🛑 Stopping session...\n', 'system');
+            
+            // Kill Claude process if running
+            if (session.claudeProcess) {
+                try {
+                    // First try graceful termination
+                    await this.dockerService.execCommand(sessionId, ['pkill', '-f', 'claude'], { user: 'claude' });
+                    
+                    // If that doesn't work, force kill
+                    if (force) {
+                        setTimeout(async () => {
+                            try {
+                                await this.dockerService.execCommand(sessionId, ['pkill', '-9', '-f', 'claude'], { user: 'claude' });
+                            } catch (killError) {
+                                console.warn('Force kill failed:', killError.message);
+                            }
+                        }, 2000);
+                    }
+                    
+                    session.claudeProcess = null;
+                    this.addFormattedOutput(sessionId, '🔄 Claude process terminated\n', 'system');
+                } catch (processError) {
+                    console.warn('Failed to terminate Claude process:', processError.message);
+                }
+            }
             
             // Stop container
             await this.dockerService.stopContainer(sessionId, force);
@@ -525,10 +653,11 @@ class SessionManager extends EventEmitter {
             session.status = 'stopped';
             session.state = 'stopped';
             session.stoppedAt = new Date();
+            session.processingMessage = false;
             
             this.emit('sessionStopped', session);
             
-            this.addOutput(sessionId, '✅ Session stopped\n', 'success');
+            this.addFormattedOutput(sessionId, '✅ Session stopped\n', 'success');
             
             return { success: true };
             
@@ -583,6 +712,277 @@ class SessionManager extends EventEmitter {
         
         // Emit output event
         this.emit('sessionOutput', sessionId, output);
+    }
+
+    addFormattedOutput(sessionId, data, type = 'stdout') {
+        const session = this.sessions.get(sessionId);
+        if (!session) return;
+        
+        const output = {
+            timestamp: new Date(),
+            data,
+            type
+        };
+        
+        session.output.push(output);
+        
+        // Trim buffer if too large
+        if (session.output.length > session.maxLines) {
+            session.output.shift();
+        }
+        
+        // Emit output event
+        this.emit('sessionOutput', sessionId, output);
+    }
+
+    handleClaudeJsonOutput(sessionId, jsonData) {
+        const session = this.sessions.get(sessionId);
+        if (!session) return;
+
+        try {
+            // Mark that conversation has started
+            session.hasStartedConversation = true;
+
+            // Handle different types of JSON messages from Claude CLI
+            switch (jsonData.type) {
+                case 'system':
+                    // Handle system initialization - extract session metadata but don't display raw JSON
+                    if (jsonData.subtype === 'init') {
+                        session.claudeSessionId = jsonData.session_id;
+                        session.claudeModel = jsonData.model;
+                        session.availableTools = jsonData.tools;
+                        // Store metadata but don't display in chat
+                        this.emit('sessionMetadata', sessionId, {
+                            sessionId: jsonData.session_id,
+                            model: jsonData.model,
+                            tools: jsonData.tools,
+                            slashCommands: jsonData.slash_commands
+                        });
+                    }
+                    break;
+
+                case 'stream_event':
+                    this.handleStreamEvent(sessionId, jsonData);
+                    break;
+                
+                case 'assistant':
+                    // Handle assistant message from Claude CLI - this is the final complete message
+                    if (jsonData.message && jsonData.message.content && Array.isArray(jsonData.message.content)) {
+                        const textContent = jsonData.message.content
+                            .filter(block => block.type === 'text')
+                            .map(block => block.text)
+                            .join('');
+                        // Don't display this as it's already been streamed
+                        console.log(`[Session ${sessionId}] Complete message received: ${textContent.substring(0, 50)}...`);
+                    }
+                    break;
+                
+                case 'result':
+                    // Handle final result with usage stats
+                    if (jsonData.usage) {
+                        session.lastUsage = jsonData.usage;
+                        this.emit('usageUpdate', sessionId, jsonData.usage);
+                    }
+                    if (jsonData.total_cost_usd) {
+                        session.totalCost = (session.totalCost || 0) + jsonData.total_cost_usd;
+                        this.emit('costUpdate', sessionId, session.totalCost);
+                    }
+                    console.log(`[Session ${sessionId}] Request completed - Duration: ${jsonData.duration_ms}ms, Cost: $${jsonData.total_cost_usd || 0}`);
+                    break;
+                
+                case 'tool_use':
+                    this.addFormattedOutput(sessionId, this.formatToolUse(jsonData), 'claude_tool');
+                    break;
+                
+                case 'tool_result':
+                    this.addFormattedOutput(sessionId, this.formatToolResult(jsonData), 'claude_tool_result');
+                    break;
+                
+                case 'error':
+                    this.addFormattedOutput(sessionId, `❌ Claude Error: ${jsonData.message || jsonData.error}\n`, 'error');
+                    break;
+                
+                default:
+                    // For debugging - only log unknown types, don't display in chat
+                    console.log(`[Session ${sessionId}] Unknown JSON type:`, jsonData.type);
+            }
+        } catch (error) {
+            console.error('Error handling Claude JSON output:', error);
+            this.addFormattedOutput(sessionId, `⚠️ JSON Parse Error: ${error.message}\n`, 'error');
+        }
+    }
+
+    handleStreamEvent(sessionId, jsonData) {
+        const session = this.sessions.get(sessionId);
+        if (!session || !jsonData.event) return;
+
+        const event = jsonData.event;
+        
+        switch (event.type) {
+            case 'message_start':
+                // Initialize message - store metadata but don't display
+                if (event.message) {
+                    session.currentMessageId = event.message.id;
+                    session.currentMessageModel = event.message.model;
+                    session.usage = event.message.usage;
+                    
+                    // Emit metadata update for UI statistics
+                    this.emit('messageMetadata', sessionId, {
+                        messageId: event.message.id,
+                        model: event.message.model,
+                        usage: event.message.usage
+                    });
+                }
+                break;
+
+            case 'content_block_start':
+                // Start of content - prepare for text
+                if (event.content_block?.type === 'text') {
+                    // Initialize the current response if not exists
+                    if (!session.currentResponse) {
+                        session.currentResponse = '';
+                        this.addFormattedOutput(sessionId, '🤖 **Claude**: ', 'claude_message_start');
+                    }
+                }
+                break;
+
+            case 'content_block_delta':
+                // Streaming text content - append to current response
+                if (event.delta?.type === 'text_delta' && event.delta.text) {
+                    if (!session.currentResponse) {
+                        session.currentResponse = '';
+                    }
+                    session.currentResponse += event.delta.text;
+                    
+                    // Stream the text incrementally
+                    this.addFormattedOutput(sessionId, event.delta.text, 'claude_message_delta');
+                }
+                break;
+
+            case 'content_block_stop':
+                // End of content block - finalize message
+                if (session.currentResponse !== undefined) {
+                    this.addFormattedOutput(sessionId, '\n\n', 'claude_message_end');
+                    session.currentResponse = undefined;
+                }
+                break;
+
+            case 'message_delta':
+                // Handle message delta with usage updates
+                if (event.delta && event.delta.stop_reason) {
+                    session.processingMessage = false;
+                }
+                if (event.usage) {
+                    session.lastMessageUsage = event.usage;
+                    // Don't accumulate here, wait for final result
+                }
+                break;
+
+            case 'message_stop':
+                // End of message - store usage stats
+                session.processingMessage = false;
+                if (event.usage) {
+                    session.totalUsage = {
+                        inputTokens: (session.totalUsage?.inputTokens || 0) + (event.usage.input_tokens || 0),
+                        outputTokens: (session.totalUsage?.outputTokens || 0) + (event.usage.output_tokens || 0),
+                        totalTokens: (session.totalUsage?.totalTokens || 0) + ((event.usage.input_tokens || 0) + (event.usage.output_tokens || 0))
+                    };
+                    
+                    // Emit usage update for UI statistics
+                    this.emit('usageUpdate', sessionId, session.totalUsage);
+                }
+                break;
+
+            default:
+                // Log unknown stream events for debugging
+                console.log(`[Session ${sessionId}] Unknown stream event:`, event.type);
+        }
+    }
+
+    formatClaudeMessage(jsonData) {
+        let formatted = '';
+        
+        if (jsonData.role === 'assistant') {
+            formatted += '🤖 Claude: ';
+        } else if (jsonData.role === 'user') {
+            formatted += '👤 You: ';
+        }
+        
+        if (Array.isArray(jsonData.content)) {
+            jsonData.content.forEach(block => {
+                if (block.type === 'text') {
+                    formatted += block.text + '\n';
+                } else if (block.type === 'code') {
+                    formatted += `\`\`\`${block.language || ''}\n${block.code}\n\`\`\`\n`;
+                }
+            });
+        } else if (typeof jsonData.content === 'string') {
+            formatted += jsonData.content + '\n';
+        }
+        
+        return formatted;
+    }
+
+    formatClaudePartialMessage(jsonData) {
+        // For partial messages, just return the content without formatting
+        if (Array.isArray(jsonData.content)) {
+            return jsonData.content.map(block => block.text || block.code || '').join('');
+        } else if (typeof jsonData.content === 'string') {
+            return jsonData.content;
+        }
+        return '';
+    }
+
+    formatToolUse(jsonData) {
+        const toolName = jsonData.name || jsonData.tool_name || 'Unknown Tool';
+        let formatted = `🔧 Using tool: ${toolName}\n`;
+        
+        if (jsonData.parameters || jsonData.input) {
+            formatted += `Parameters: ${JSON.stringify(jsonData.parameters || jsonData.input, null, 2)}\n`;
+        }
+        
+        return formatted;
+    }
+
+    formatToolResult(jsonData) {
+        let formatted = '📋 Tool Result:\n';
+        
+        if (jsonData.result || jsonData.output) {
+            const result = jsonData.result || jsonData.output;
+            if (typeof result === 'string') {
+                formatted += result + '\n';
+            } else {
+                formatted += JSON.stringify(result, null, 2) + '\n';
+            }
+        }
+        
+        return formatted;
+    }
+
+    formatStatusMessage(jsonData) {
+        const status = jsonData.status || jsonData.message || 'Status update';
+        return `ℹ️ Status: ${status}\n`;
+    }
+
+    getWelcomeMessage() {
+        return `👋 **Hello!** I'm Claude, your AI coding assistant. I'm ready to help with development tasks, debugging, code review, and more. What would you like to work on?`;
+    }
+
+    replaceOutput(sessionId, data, type = 'stdout') {
+        const session = this.sessions.get(sessionId);
+        if (!session) return;
+        
+        const output = {
+            timestamp: new Date(),
+            data,
+            type
+        };
+        
+        // Clear existing output and replace with new data
+        session.output = [output];
+        
+        // Emit output replacement event
+        this.emit('sessionOutputReplaced', sessionId, output);
     }
 
     getSession(sessionId) {
@@ -819,40 +1219,32 @@ class SessionManager extends EventEmitter {
         
         let cleaned = text;
         
-        // Remove non-color ANSI escape sequences but preserve SGR (color) codes
+        // First pass: Remove all ANSI escape sequences completely for clean display
         cleaned = cleaned
-            // Cursor positioning and movement (but not SGR color codes)
-            .replace(/\x1b\[[\d;]*[HfABCDEFGJKSTusp]/g, '')
-            // Clear screen and erase sequences
-            .replace(/\x1b\[[\d]*[JK]/g, '')
-            // Screen mode changes
-            .replace(/\x1b\[\?[\d;]*[hl]/g, '')
-            // CSI sequences without escape char (malformed but common) - except SGR
-            .replace(/\[[?!><][\d;]*[A-LN-Za-ln-z]/g, '') // Exclude M and m (SGR)
-            // OSC (Operating System Command) sequences
-            .replace(/\x1b\][0-9;]*[^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-            // OSC sequences without proper termination
-            .replace(/\x1b\][^\x07\x1b]*\x07/g, '')
-            // Device Control String sequences
-            .replace(/\x1bP[^\\]*(?:\\|\x1b\\)/g, '')
-            // Application Program Command sequences  
-            .replace(/\x1b_[^\\]*(?:\\|\x1b\\)/g, '')
-            // Privacy Message sequences
-            .replace(/\x1b\^[^\\]*(?:\\|\x1b\\)/g, '')
-            // Start of String sequences
-            .replace(/\x1bX[^\\]*(?:\\|\x1b\\)/g, '')
-            // Single character escape sequences (but not SGR)
-            .replace(/\x1b[ABCDEFGHIJKLNOPQRSTUVWXYZ]/g, '') // Exclude M
-            .replace(/\x1b[abcdefghijklnopqrstuvwxyz]/g, '') // Exclude m
-            .replace(/\x1b[0-9]/g, '')
-            // Remove other control characters but preserve newlines and tabs
+            // Remove ALL CSI sequences (Control Sequence Introducer)
+            .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+            // Remove OSC sequences (Operating System Command)
+            .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+            // Remove DCS sequences (Device Control String)
+            .replace(/\x1bP[^\x1b]*(?:\x1b\\|\x07)/g, '')
+            // Remove APC sequences (Application Program Command)
+            .replace(/\x1b_[^\x1b]*(?:\x1b\\|\x07)/g, '')
+            // Remove PM sequences (Privacy Message)
+            .replace(/\x1b\^[^\x1b]*(?:\x1b\\|\x07)/g, '')
+            // Remove SOS sequences (Start of String)
+            .replace(/\x1bX[^\x1b]*(?:\x1b\\|\x07)/g, '')
+            // Remove single character escapes
+            .replace(/\x1b[0-9A-Za-z]/g, '')
+            // Remove malformed sequences (missing escape character)
+            .replace(/\[[0-9;?]*[a-zA-Z]/g, '')
+            // Remove all remaining control characters except newlines and tabs
             .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '')
-            // Remove terminal mode switches
-            .replace(/\x1b[()][AB012]/g, '')
-            // Remove bell character
-            .replace(/\x07/g, '')
-            // Remove backspace sequences that could break formatting
-            .replace(/\x08+/g, '');
+            // Remove stray F characters that appear at line start
+            .replace(/^F+/gm, '')
+            // Remove other garbage characters at line start
+            .replace(/^[^\w\s\n\t\+\-\|]+/gm, '');
+            
+        // Second pass: Clean up formatting issues
             
         // PRESERVE SGR (Select Graphic Rendition) codes for color rendering
         // These include: \x1b[...m sequences for colors, bold, italic, etc.
