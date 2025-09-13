@@ -138,106 +138,6 @@ module.exports = (sessionManager) => {
         }
     );
 
-    // Get session output
-    router.get('/:id/output',
-        param('id').isUUID().withMessage('Invalid session ID'),
-        handleValidationErrors,
-        (req, res) => {
-            try {
-                const session = sessionManager.getSession(req.params.id);
-                
-                if (!session) {
-                    return res.status(404).json({
-                        success: false,
-                        error: 'Session not found'
-                    });
-                }
-                
-                const { lines, offset } = req.query;
-                let output = session.output;
-                
-                console.log('Session output debug:', {
-                    sessionId: req.params.id,
-                    totalItems: output?.length || 0,
-                    outputSample: output?.slice(0, 5)?.map(item => ({
-                        type: item?.type,
-                        dataLength: item?.data?.length || 0,
-                        dataPreview: item?.data?.substring(0, 50) || 'no data'
-                    })),
-                    lastFewItems: output?.slice(-5)?.map(item => ({
-                        type: item?.type,
-                        dataLength: item?.data?.length || 0,
-                        dataPreview: item?.data?.substring(0, 50) || 'no data'
-                    })),
-                    allTypes: [...new Set(output?.map(item => item?.type) || [])]
-                });
-                
-                // Filter out system setup messages that aren't relevant for chat interface
-                if (Array.isArray(output)) {
-                    output = output.filter(item => {
-                        const type = item.type || 'output';
-                        
-                        // Always keep important chat message types
-                        const keepTypes = ['welcome', 'claude_message_start', 'claude_message_delta', 'claude_message_end', 'claude_tool', 'claude_tool_result', 'claude_status', 'user', 'error', 'success'];
-                        if (keepTypes.includes(type)) {
-                            return true;
-                        }
-                        
-                        // Hide system setup messages that aren't relevant for chat
-                        const hideTypes = ['system', 'git'];
-                        if (hideTypes.includes(type)) {
-                            // But keep important system messages (errors, warnings, etc.)
-                            const content = item.data || '';
-                            const keepPatterns = ['error', 'warning', 'failed', 'terminated', 'completed', 'stopped'];
-                            const shouldKeep = keepPatterns.some(pattern => 
-                                content.toLowerCase().includes(pattern)
-                            );
-                            return shouldKeep;
-                        }
-                        
-                        return true;
-                    });
-                    
-                    console.log('After filtering:', {
-                        originalCount: session.output?.length || 0,
-                        filteredCount: output?.length || 0,
-                        filteredTypes: [...new Set(output?.map(item => item?.type) || [])],
-                        filteredSample: output?.slice(0, 3)?.map(item => ({
-                            type: item?.type,
-                            dataPreview: item?.data?.substring(0, 30) || 'no data'
-                        }))
-                    });
-                }
-                
-                // Apply offset if specified
-                if (offset && !isNaN(offset)) {
-                    output = output.slice(parseInt(offset));
-                }
-                
-                // Limit lines if specified
-                if (lines && !isNaN(lines)) {
-                    output = output.slice(-parseInt(lines));
-                }
-                
-                // Convert array of output objects to string for frontend
-                const outputString = Array.isArray(output) 
-                    ? output.map(item => item.data || item).join('')
-                    : output;
-                
-                res.json({
-                    success: true,
-                    output: outputString,
-                    rawOutput: Array.isArray(output) ? output : null, // Keep raw for type info
-                    totalLines: session.output.length
-                });
-            } catch (error) {
-                res.status(500).json({
-                    success: false,
-                    error: error.message
-                });
-            }
-        }
-    );
 
     // Get Docker container logs for session
     router.get('/:id/logs',
@@ -324,7 +224,6 @@ module.exports = (sessionManager) => {
             body('memory').optional().isInt({ min: 128 * 1024 * 1024, max: 8 * 1024 * 1024 * 1024 }),
             body('cpuShares').optional().isInt({ min: 128, max: 4096 }),
             body('env').optional().isArray(),
-            body('claudeArgs').optional().isArray()
         ],
         handleValidationErrors,
         async (req, res) => {
@@ -336,8 +235,7 @@ module.exports = (sessionManager) => {
                     newBranchName: req.body.newBranchName,
                     memory: req.body.memory,
                     cpuShares: req.body.cpuShares,
-                    env: req.body.env || [],
-                    claudeArgs: req.body.claudeArgs || []
+                    env: req.body.env || []
                 };
 
                 const result = await sessionManager.createSession(config);
@@ -356,28 +254,6 @@ module.exports = (sessionManager) => {
         }
     );
 
-    // Execute command in session
-    router.post('/:id/execute',
-        [
-            param('id').isUUID().withMessage('Invalid session ID'),
-            body('prompt').isString().trim().isLength({ min: 1 }).withMessage('Prompt is required'),
-            body('options').optional().isObject()
-        ],
-        handleValidationErrors,
-        async (req, res) => {
-            try {
-                const { prompt, options = {} } = req.body;
-                const result = await sessionManager.executeCommand(req.params.id, prompt, options);
-                
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({
-                    success: false,
-                    error: error.message
-                });
-            }
-        }
-    );
 
     // Stop session
     router.post('/:id/stop',
@@ -448,11 +324,7 @@ module.exports = (sessionManager) => {
                     state: session.state,
                     createdAt: session.createdAt,
                     lastActivity: session.lastActivity,
-                    uptime: session.createdAt ? Date.now() - session.createdAt.getTime() : 0,
-                    outputLines: session.output.length,
-                    queuedMessages: session.messageQueue.length,
-                    processingMessage: session.processingMessage,
-                    conversationId: session.conversationId
+                    uptime: session.createdAt ? Date.now() - session.createdAt.getTime() : 0
                 };
                 
                 res.json({
@@ -468,58 +340,7 @@ module.exports = (sessionManager) => {
         }
     );
 
-    // Clear session output
-    router.post('/:id/clear',
-        param('id').isUUID().withMessage('Invalid session ID'),
-        handleValidationErrors,
-        (req, res) => {
-            try {
-                const session = sessionManager.getSession(req.params.id);
-                
-                if (!session) {
-                    return res.status(404).json({
-                        success: false,
-                        error: 'Session not found'
-                    });
-                }
-                
-                session.output = [];
-                sessionManager.addOutput(req.params.id, '🧹 Output cleared\n', 'system');
-                
-                res.json({
-                    success: true,
-                    message: 'Session output cleared'
-                });
-            } catch (error) {
-                res.status(500).json({
-                    success: false,
-                    error: error.message
-                });
-            }
-        }
-    );
 
-    // Terminate Claude process
-    router.post('/:id/terminate',
-        [
-            param('id').isUUID().withMessage('Invalid session ID'),
-            body('force').optional().isBoolean()
-        ],
-        handleValidationErrors,
-        async (req, res) => {
-            try {
-                const { force = false } = req.body;
-                const result = await sessionManager.terminateClaudeProcess(req.params.id, force);
-                
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({
-                    success: false,
-                    error: error.message
-                });
-            }
-        }
-    );
 
     // Get all Docker containers
     router.get('/containers',

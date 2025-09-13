@@ -1,16 +1,14 @@
 import React from 'react';
-import Terminal from './Terminal';
 import EmptyState from './EmptyState';
 import SessionControls from './SessionControls';
+import ClaudeTerminal from './ClaudeTerminal';
 import './MainContent.css';
 
 const MainContent = ({ 
   activeSession, 
-  onExecuteCommand, 
   onStopSession, 
   onClearSession,
-  onDeleteSession,
-  onTerminateProcess
+  onDeleteSession
 }) => {
   if (!activeSession) {
     return <EmptyState />;
@@ -25,10 +23,9 @@ const MainContent = ({
         onDeleteSession={onDeleteSession}
       />
       
-      <Terminal
-        session={activeSession}
-        onExecuteCommand={onExecuteCommand}
-        onTerminateProcess={onTerminateProcess}
+      <ClaudeTerminal
+        sessionId={activeSession.id}
+        sessionName={activeSession.name}
       />
     </div>
   );

@@ -10,7 +10,7 @@ A multi-session Docker container management system for Claude Code that enables 
 - **Real-time Monitoring**: Live session output streaming and status updates
 - **Auto-Resume**: Automatic session recovery after Claude usage limits
 - **Web Interface**: Modern web-based dashboard for session management
-- **WebSocket Communication**: Real-time updates and interactive terminals
+- **WebSocket Communication**: Real-time updates for session monitoring
 
 ## 🏗️ Architecture
 
@@ -104,16 +104,13 @@ npm start
 The system will:
 - Create a new Docker container
 - Clone the repository (if provided)
-- Initialize Claude Code in the container
-- Provide a terminal interface for interaction
+- Set up the isolated development environment
 
 ### Managing Sessions
 
 - **View Sessions**: All active sessions are listed in the sidebar
-- **Switch Sessions**: Click on any session to view its terminal
-- **Send Commands**: Type commands in the terminal input and press Enter
+- **Switch Sessions**: Click on any session to view its details
 - **Stop Sessions**: Use the "Stop Session" button to terminate a session
-- **Monitor Output**: Real-time output streaming from Claude Code
 
 ### API Usage
 

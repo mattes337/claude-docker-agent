@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, Plus, Wifi, WifiOff, LayoutDashboard, Terminal, Container } from 'lucide-react';
+import { Bot, Plus, Wifi, WifiOff, LayoutDashboard, Monitor, Container } from 'lucide-react';
 
 const Header = ({ sessionCount, isConnected, onCreateSession, currentView, onViewDashboard, onViewSession, onViewContainers, sessions }) => {
   return (
@@ -70,7 +70,7 @@ const Header = ({ sessionCount, isConnected, onCreateSession, currentView, onVie
             }}
             title="Session View"
           >
-            <Terminal size={16} />
+            <Monitor size={16} />
             Session
           </button>
         </div>

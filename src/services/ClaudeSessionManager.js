@@ -4,13 +4,14 @@ const path = require('path');
 const { spawn } = require('child_process');
 const EventEmitter = require('events');
 
-class SessionManager extends EventEmitter {
+class ClaudeSessionManager extends EventEmitter {
     constructor(dockerService) {
         super();
         this.dockerService = dockerService;
         this.sessions = new Map();
         this.workspacesDir = path.resolve(process.env.WORKSPACES_DIR || path.join(__dirname, '../../workspaces'));
         this.sessionsFile = path.join(this.workspacesDir, 'sessions.json');
+        this.systemPromptPath = path.join(__dirname, '../../claude-system-prompt.txt');
         this.cleanupInterval = null;
         
         // Ensure workspaces directory exists
@@ -32,14 +33,14 @@ class SessionManager extends EventEmitter {
                 console.log('📥 Loading persisted sessions...');
                 const data = await fs.readJson(this.sessionsFile);
                 
-                // Restore sessions and check Docker containers
                 for (const sessionData of data.sessions || []) {
                     const session = {
                         ...sessionData,
                         createdAt: new Date(sessionData.createdAt),
                         lastActivity: new Date(sessionData.lastActivity),
                         stoppedAt: sessionData.stoppedAt ? new Date(sessionData.stoppedAt) : undefined,
-                        container: null
+                        container: null,
+                        claudeProcess: null
                     };
                     
                     // Check if Docker container still exists
@@ -71,7 +72,8 @@ class SessionManager extends EventEmitter {
         try {
             const sessionsArray = Array.from(this.sessions.values()).map(session => ({
                 ...session,
-                container: null // Don't serialize container objects
+                container: null,
+                claudeProcess: null
             }));
             
             const data = {
@@ -86,11 +88,9 @@ class SessionManager extends EventEmitter {
     }
 
     startAutoSave() {
-        // Save sessions every 30 seconds
         this.saveInterval = setInterval(async () => {
             await this.saveSessions();
         }, 30 * 1000);
-        
         console.log('💾 Auto-save started (saves every 30 seconds)');
     }
 
@@ -119,37 +119,31 @@ class SessionManager extends EventEmitter {
             createdAt: new Date(),
             lastActivity: new Date(),
             container: null,
+            claudeProcess: null,
+            claudeSessionId: null,
+            messageHistory: [],
             config: {
-                memory: config.memory || 1024 * 1024 * 1024, // 1GB
+                memory: config.memory || 1024 * 1024 * 1024,
                 cpuShares: config.cpuShares || 1024,
                 env: config.env || []
             }
         };
 
         try {
-            // Store session
             this.sessions.set(sessionId, session);
-            
-            // Emit session created event
             this.emit('sessionCreated', session);
             
-            // Setup workspace
             await this.setupWorkspace(session);
             
-            // Clone repository if provided
             if (config.repoUrl) {
                 await this.cloneRepository(session);
-                
-                // Create new branch if specified
                 if (config.newBranchName) {
                     await this.createNewBranch(session);
                 }
             }
             
-            // Create and start container
             await this.createContainer(session);
             
-            // Set session to running after successful initialization
             session.status = 'running';
             session.state = 'ready';
             this.emit('sessionReady', session);
@@ -162,10 +156,7 @@ class SessionManager extends EventEmitter {
         } catch (error) {
             session.status = 'error';
             session.error = error.message;
-            
             this.emit('sessionError', session, error);
-            
-            // Cleanup on error
             await this.cleanupSession(sessionId);
             
             return {
@@ -173,6 +164,117 @@ class SessionManager extends EventEmitter {
                 error: error.message
             };
         }
+    }
+
+    async executeClaudeCommand(sessionId, prompt, options = {}) {
+        const session = this.sessions.get(sessionId);
+        if (!session) {
+            throw new Error('Session not found');
+        }
+
+        // Read system prompt to pass as argument
+        const systemPrompt = await fs.readFile(this.systemPromptPath, 'utf-8');
+        
+        // Build Claude CLI command to run inside Docker container
+        const claudeArgs = [
+            '-p', prompt,
+            '--include-partial-messages',
+            '--print',
+            '--output-format=stream-json',
+            '--verbose',
+            '--append-system-prompt', systemPrompt
+        ];
+
+        // Add session ID for subsequent calls
+        if (session.claudeSessionId || options.claudeSessionId) {
+            claudeArgs.push('-r', session.claudeSessionId || options.claudeSessionId);
+        }
+
+        // Execute Claude command inside the Docker container
+        const dockerExecArgs = [
+            'exec', '-i', `claude-session-${sessionId}`,
+            'claude', ...claudeArgs
+        ];
+
+        return new Promise((resolve, reject) => {
+            const claudeProcess = spawn('docker', dockerExecArgs, {
+                env: {
+                    ...process.env,
+                    ...session.config.env
+                }
+            });
+
+            let jsonBuffer = '';
+            const messages = [];
+            const statistics = {};
+            let claudeSessionId = null;
+
+            claudeProcess.stdout.on('data', (data) => {
+                jsonBuffer += data.toString();
+                
+                // Try to parse complete JSON lines
+                const lines = jsonBuffer.split('\n');
+                jsonBuffer = lines.pop(); // Keep incomplete line in buffer
+
+                for (const line of lines) {
+                    if (line.trim()) {
+                        try {
+                            const parsed = JSON.parse(line);
+                            
+                            // Extract session ID from first response
+                            if (!claudeSessionId && parsed.sessionId) {
+                                claudeSessionId = parsed.sessionId;
+                                session.claudeSessionId = claudeSessionId;
+                            }
+
+                            // Handle different types of JSON responses
+                            if (parsed.type === 'message') {
+                                messages.push(parsed);
+                                this.emit('claudeMessage', sessionId, parsed);
+                            } else if (parsed.type === 'statistics') {
+                                Object.assign(statistics, parsed.data);
+                                this.emit('claudeStatistics', sessionId, statistics);
+                            } else if (parsed.type === 'partial') {
+                                this.emit('claudePartial', sessionId, parsed);
+                            } else if (parsed.type === 'error') {
+                                this.emit('claudeError', sessionId, parsed);
+                            }
+                        } catch (e) {
+                            console.warn('Failed to parse JSON line:', line);
+                        }
+                    }
+                }
+            });
+
+            claudeProcess.stderr.on('data', (data) => {
+                console.error('Claude CLI error:', data.toString());
+                this.emit('claudeError', sessionId, { error: data.toString() });
+            });
+
+            claudeProcess.on('close', (code) => {
+                session.lastActivity = new Date();
+                
+                if (code === 0) {
+                    resolve({
+                        success: true,
+                        messages,
+                        statistics,
+                        sessionId: claudeSessionId
+                    });
+                } else {
+                    reject(new Error(`Claude CLI exited with code ${code}`));
+                }
+            });
+
+            claudeProcess.on('error', (error) => {
+                reject(error);
+            });
+
+            // Close stdin immediately since Claude doesn't need input
+            claudeProcess.stdin.end();
+
+            session.claudeProcess = claudeProcess;
+        });
     }
 
     async setupWorkspace(session) {
@@ -185,28 +287,15 @@ class SessionManager extends EventEmitter {
     }
 
     async cloneRepository(session) {
-        const { repoUrl, branch, workDir, id } = session;
+        const { repoUrl, branch, workDir } = session;
         
         console.log(`📦 Cloning repository: ${repoUrl}`);
-        console.log(`📂 Destination: ${workDir}`);
         
         try {
-            // Clone repository
             const cloneProcess = spawn('git', [
                 'clone', '--progress', '--branch', branch, repoUrl, workDir
             ], {
                 stdio: ['pipe', 'pipe', 'pipe']
-            });
-
-            let output = '';
-            let errorOutput = '';
-
-            cloneProcess.stdout.on('data', (data) => {
-                output += data.toString();
-            });
-
-            cloneProcess.stderr.on('data', (data) => {
-                errorOutput += data.toString();
             });
 
             await new Promise((resolve, reject) => {
@@ -215,28 +304,23 @@ class SessionManager extends EventEmitter {
                         console.log('✅ Repository cloned successfully');
                         resolve();
                     } else {
-                        reject(new Error(`Git clone failed with code ${code}: ${errorOutput}`));
+                        reject(new Error(`Git clone failed with code ${code}`));
                     }
                 });
 
-                cloneProcess.on('error', (error) => {
-                    reject(new Error(`Git clone error: ${error.message}`));
-                });
+                cloneProcess.on('error', reject);
             });
-
         } catch (error) {
-            console.error(`❌ Clone failed: ${error.message}`);
             throw new Error(`Failed to clone repository: ${error.message}`);
         }
     }
 
     async createNewBranch(session) {
-        const { newBranchName, branch, workDir, id } = session;
+        const { newBranchName, branch, workDir } = session;
         
         console.log(`🌿 Creating new branch: ${newBranchName}`);
         
         try {
-            // Create and checkout new branch from base branch
             const checkoutProcess = spawn('git', [
                 'checkout', '-b', newBranchName, branch
             ], {
@@ -244,35 +328,20 @@ class SessionManager extends EventEmitter {
                 stdio: ['pipe', 'pipe', 'pipe']
             });
 
-            let output = '';
-            let errorOutput = '';
-
-            checkoutProcess.stdout.on('data', (data) => {
-                output += data.toString();
-            });
-
-            checkoutProcess.stderr.on('data', (data) => {
-                errorOutput += data.toString();
-            });
-
             await new Promise((resolve, reject) => {
                 checkoutProcess.on('close', (code) => {
                     if (code === 0) {
-                        console.log(`✅ New branch '${newBranchName}' created and checked out`);
+                        console.log(`✅ New branch '${newBranchName}' created`);
                         session.currentBranch = newBranchName;
                         resolve();
                     } else {
-                        reject(new Error(`Git checkout failed with code ${code}: ${errorOutput}`));
+                        reject(new Error(`Git checkout failed with code ${code}`));
                     }
                 });
 
-                checkoutProcess.on('error', (error) => {
-                    reject(new Error(`Git checkout error: ${error.message}`));
-                });
+                checkoutProcess.on('error', reject);
             });
-
         } catch (error) {
-            console.error(`❌ Branch creation failed: ${error.message}`);
             throw new Error(`Failed to create new branch: ${error.message}`);
         }
     }
@@ -280,29 +349,91 @@ class SessionManager extends EventEmitter {
     async createContainer(session) {
         try {
             console.log('🐳 Creating Docker container...');
+            this.emit('containerBooting', session.id, 'Preparing Docker container...');
+            
+            // Copy system prompt to session workspace
+            const sessionPromptPath = path.join(session.workDir, 'claude-system-prompt.txt');
+            await fs.copy(this.systemPromptPath, sessionPromptPath);
+            this.emit('containerBooting', session.id, 'Configuring Claude environment...');
             
             const containerConfig = {
                 ...session.config,
                 binds: [
-                    `${session.workDir}:/workspace`
+                    `${session.workDir}:/workspace`,
+                    `${sessionPromptPath}:/claude-system-prompt.txt:ro`
                 ],
                 cmd: ['bash', '-l']
             };
 
+            this.emit('containerBooting', session.id, 'Creating container from image...');
             const container = await this.dockerService.createContainer(session.id, containerConfig);
+            
+            this.emit('containerBooting', session.id, 'Starting container services...');
             await this.dockerService.startContainer(session.id);
             
-            session.container = container;
+            // Fix permissions for Claude directories
+            this.emit('containerBooting', session.id, 'Setting up Claude directories...');
+            await this.fixClaudePermissions(session.id);
             
+            // Verify Claude is available in container
+            this.emit('containerBooting', session.id, 'Verifying Claude CLI installation...');
+            await this.verifyClaudeInContainer(session.id);
+            
+            session.container = container;
             console.log('✅ Container created and started');
+            this.emit('containerReady', session.id);
             
         } catch (error) {
+            this.emit('containerError', session.id, error.message);
             throw new Error(`Failed to create container: ${error.message}`);
         }
     }
 
+    async fixClaudePermissions(sessionId) {
+        return new Promise((resolve, reject) => {
+            const fixPermsProcess = spawn('docker', [
+                'exec', '-u', 'root', `claude-session-${sessionId}`,
+                'sh', '-c',
+                'mkdir -p /home/claude/.claude/plugins/repos && chown -R claude:claude /home/claude'
+            ]);
 
+            fixPermsProcess.on('close', (code) => {
+                if (code === 0) {
+                    console.log(`✅ Claude permissions fixed for container ${sessionId}`);
+                    resolve();
+                } else {
+                    console.warn(`Failed to fix Claude permissions (code ${code}), continuing anyway...`);
+                    resolve(); // Continue anyway, might work
+                }
+            });
 
+            fixPermsProcess.on('error', (error) => {
+                console.warn(`Error fixing Claude permissions: ${error.message}`);
+                resolve(); // Continue anyway
+            });
+        });
+    }
+
+    async verifyClaudeInContainer(sessionId) {
+        return new Promise((resolve, reject) => {
+            const verifyProcess = spawn('docker', [
+                'exec', `claude-session-${sessionId}`,
+                'which', 'claude'
+            ]);
+
+            verifyProcess.on('close', (code) => {
+                if (code === 0) {
+                    resolve();
+                } else {
+                    reject(new Error('Claude CLI not found in container. Please ensure the Docker image includes Claude CLI.'));
+                }
+            });
+
+            verifyProcess.on('error', (error) => {
+                reject(new Error(`Failed to verify Claude CLI: ${error.message}`));
+            });
+        });
+    }
 
     async stopSession(sessionId, force = false) {
         const session = this.sessions.get(sessionId);
@@ -313,7 +444,12 @@ class SessionManager extends EventEmitter {
         try {
             console.log('🛑 Stopping session...');
             
-            // Stop container
+            // Kill Claude process if running
+            if (session.claudeProcess) {
+                session.claudeProcess.kill();
+                session.claudeProcess = null;
+            }
+            
             await this.dockerService.stopContainer(sessionId, force);
             
             session.status = 'stopped';
@@ -321,7 +457,6 @@ class SessionManager extends EventEmitter {
             session.stoppedAt = new Date();
             
             console.log('✅ Session stopped');
-            
             this.emit('sessionStopped', session);
             
             return { success: true };
@@ -333,35 +468,29 @@ class SessionManager extends EventEmitter {
 
     async cleanupSession(sessionId) {
         const session = this.sessions.get(sessionId);
-        if (!session) {
-            return;
-        }
+        if (!session) return;
 
         try {
-            // Stop and remove container
+            // Kill Claude process if running
+            if (session.claudeProcess) {
+                session.claudeProcess.kill();
+            }
+            
             await this.dockerService.stopContainer(sessionId, true);
             await this.dockerService.removeContainer(sessionId);
             
-            // Remove workspace if configured to do so
-            if (process.env.CLEANUP_WORKSPACES === 'true') {
+            if (process.env.CLEANUP_WORKSPACES === 'true' && session.workDir) {
                 await fs.remove(session.workDir);
                 console.log(`🧹 Workspace cleaned up: ${session.workDir}`);
             }
             
-            // Remove from sessions
             this.sessions.delete(sessionId);
-            
             this.emit('sessionCleaned', sessionId);
             
         } catch (error) {
             console.error(`Error cleaning up session ${sessionId}:`, error.message);
         }
     }
-
-
-
-
-
 
     getSession(sessionId) {
         return this.sessions.get(sessionId);
@@ -382,7 +511,8 @@ class SessionManager extends EventEmitter {
             state: session.state,
             workDir: session.workDir,
             createdAt: session.createdAt,
-            lastActivity: session.lastActivity
+            lastActivity: session.lastActivity,
+            claudeSessionId: session.claudeSessionId
         };
     }
 
@@ -398,55 +528,24 @@ class SessionManager extends EventEmitter {
         return this.sessions.size;
     }
 
-    async getAllContainers() {
-        try {
-            const containers = await this.dockerService.docker.listContainers({ all: true });
-            const claudeContainers = containers.filter(container => 
-                container.Names.some(name => name.includes('claude-session-'))
-            );
+    startPeriodicCleanup() {
+        this.cleanupInterval = setInterval(async () => {
+            try {
+                await this.cleanupStoppedSessions();
+                await this.forceCleanupOrphanedContainers();
+            } catch (error) {
+                console.error('❌ Periodic cleanup failed:', error.message);
+            }
+        }, 5 * 60 * 1000);
 
-            return claudeContainers.map(container => {
-                const containerName = container.Names[0].replace('/', '');
-                const sessionId = containerName.replace('claude-session-', '');
-                const session = this.sessions.get(sessionId);
-
-                return {
-                    id: container.Id,
-                    sessionId,
-                    name: containerName,
-                    image: container.Image,
-                    state: container.State,
-                    status: container.Status,
-                    created: new Date(container.Created * 1000),
-                    hasSession: !!session,
-                    sessionInfo: session ? this.getSessionInfo(sessionId) : null
-                };
-            });
-        } catch (error) {
-            console.error('❌ Failed to get containers:', error.message);
-            return [];
-        }
+        console.log('🕐 Periodic cleanup started (runs every 5 minutes)');
     }
 
-    async removeContainer(containerId) {
-        try {
-            const dockerContainer = this.dockerService.docker.getContainer(containerId);
-            
-            // Stop container if running
-            try {
-                await dockerContainer.stop();
-            } catch (error) {
-                // Container might already be stopped
-            }
-            
-            // Remove container
-            await dockerContainer.remove({ force: true });
-            
-            console.log(`✅ Removed container ${containerId}`);
-            return { success: true };
-        } catch (error) {
-            console.error(`❌ Failed to remove container ${containerId}:`, error.message);
-            return { success: false, error: error.message };
+    stopPeriodicCleanup() {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+            this.cleanupInterval = null;
+            console.log('⏹️ Periodic cleanup stopped');
         }
     }
 
@@ -460,49 +559,11 @@ class SessionManager extends EventEmitter {
             }
         });
 
-        console.log(`Found ${stoppedSessions.length} stopped sessions to cleanup`);
-
         for (const sessionId of stoppedSessions) {
             await this.cleanupSession(sessionId);
         }
 
         console.log('✅ Cleanup completed');
-    }
-
-    async cleanupSession(sessionId) {
-        const session = this.sessions.get(sessionId);
-        if (!session) {
-            return;
-        }
-
-        try {
-            console.log(`🧹 Cleaning up session ${sessionId}`);
-
-            // Stop and remove Docker container
-            await this.dockerService.stopContainer(sessionId, true);
-            await this.dockerService.removeContainer(sessionId);
-
-            // Clean up workspace directory if it exists
-            if (session.workDir && session.workDir !== '/') {
-                try {
-                    const fs = require('fs-extra');
-                    if (await fs.pathExists(session.workDir)) {
-                        console.log(`🗑️ Removing workspace: ${session.workDir}`);
-                        await fs.remove(session.workDir);
-                    }
-                } catch (error) {
-                    console.warn(`⚠️ Failed to remove workspace ${session.workDir}: ${error.message}`);
-                }
-            }
-
-            // Remove session from memory
-            this.sessions.delete(sessionId);
-            
-            console.log(`✅ Session ${sessionId} cleaned up successfully`);
-
-        } catch (error) {
-            console.error(`❌ Failed to cleanup session ${sessionId}: ${error.message}`);
-        }
     }
 
     async forceCleanupOrphanedContainers() {
@@ -514,13 +575,10 @@ class SessionManager extends EventEmitter {
                 container.Names.some(name => name.includes('claude-session-'))
             );
 
-            console.log(`Found ${claudeContainers.length} Claude containers`);
-
             for (const container of claudeContainers) {
                 const containerName = container.Names[0].replace('/', '');
                 const sessionId = containerName.replace('claude-session-', '');
                 
-                // If session doesn't exist in memory, it's orphaned
                 if (!this.sessions.has(sessionId)) {
                     console.log(`🗑️ Removing orphaned container: ${containerName}`);
                     
@@ -533,42 +591,17 @@ class SessionManager extends EventEmitter {
                     }
                 }
             }
-
         } catch (error) {
             console.error(`❌ Failed to cleanup orphaned containers: ${error.message}`);
-        }
-    }
-
-    startPeriodicCleanup() {
-        // Run cleanup every 5 minutes
-        this.cleanupInterval = setInterval(async () => {
-            try {
-                await this.cleanupStoppedSessions();
-                await this.forceCleanupOrphanedContainers();
-            } catch (error) {
-                console.error('❌ Periodic cleanup failed:', error.message);
-            }
-        }, 5 * 60 * 1000); // 5 minutes
-
-        console.log('🕐 Periodic cleanup started (runs every 5 minutes)');
-    }
-
-    stopPeriodicCleanup() {
-        if (this.cleanupInterval) {
-            clearInterval(this.cleanupInterval);
-            this.cleanupInterval = null;
-            console.log('⏹️ Periodic cleanup stopped');
         }
     }
 
     async stopAllSessions() {
         console.log('🛑 Stopping all sessions...');
         
-        // Stop periodic processes
         this.stopPeriodicCleanup();
         this.stopAutoSave();
         
-        // Save sessions before shutdown
         await this.saveSessions();
         
         const promises = [];
@@ -577,16 +610,11 @@ class SessionManager extends EventEmitter {
         }
         await Promise.all(promises);
         
-        // Cleanup all stopped sessions
         await this.cleanupStoppedSessions();
-        
-        // Force cleanup any orphaned containers
         await this.forceCleanupOrphanedContainers();
         
         console.log('✅ All sessions stopped and cleaned up');
     }
-
 }
 
-
-module.exports = SessionManager;
+module.exports = ClaudeSessionManager;

@@ -88,47 +88,8 @@ class WebSocketService {
             });
         });
 
-        this.sessionManager.on('sessionOutput', (sessionId, output) => {
-            // Extract data from output object if needed
-            const outputData = typeof output === 'object' && output.data ? output.data : output;
-            
-            // Broadcast to subscribers immediately for real-time streaming
-            this.broadcast(sessionId, {
-                type: 'output',
-                sessionId,
-                output: outputData,
-                rawOutput: output
-            });
-        });
 
-        this.sessionManager.on('sessionOutputReplaced', (sessionId, output) => {
-            // Extract data from output object if needed
-            const outputData = typeof output === 'object' && output.data ? output.data : output;
-            
-            // Broadcast replacement event to replace entire screen content
-            this.broadcast(sessionId, {
-                type: 'output_replace',
-                sessionId,
-                output: outputData,
-                rawOutput: output
-            });
-        });
 
-        this.sessionManager.on('resumeScheduled', (sessionId, resetTime) => {
-            this.broadcast(sessionId, {
-                type: 'resume_scheduled',
-                sessionId,
-                resetTime: resetTime.toISOString()
-            });
-        });
-
-        this.sessionManager.on('sessionResumed', (sessionId) => {
-            this.broadcast(sessionId, {
-                type: 'session_resumed',
-                sessionId,
-                message: 'Session successfully resumed'
-            });
-        });
     }
 
     handleMessage(ws, data) {
@@ -141,13 +102,6 @@ class WebSocketService {
                 this.handleUnsubscribe(ws, data);
                 break;
                 
-            case 'execute_command':
-                this.handleExecuteCommand(ws, data);
-                break;
-                
-            case 'terminate_process':
-                this.handleTerminateProcess(ws, data);
-                break;
                 
             case 'get_sessions':
                 this.handleGetSessions(ws);
@@ -198,16 +152,6 @@ class WebSocketService {
                 session: sessionInfo
             });
             
-            // Send recent output
-            const session = this.sessionManager.getSession(sessionId);
-            if (session && session.output.length > 0) {
-                const recentOutput = session.output.slice(-50); // Last 50 lines
-                this.send(ws, {
-                    type: 'output_history',
-                    sessionId,
-                    output: recentOutput
-                });
-            }
         }
         
         console.log(`📡 Client subscribed to session ${sessionId}`);
@@ -244,49 +188,6 @@ class WebSocketService {
         console.log(`📡 Client unsubscribed from session ${sessionId}`);
     }
 
-    async handleExecuteCommand(ws, data) {
-        const { sessionId, prompt, options } = data;
-        
-        if (!sessionId || !prompt) {
-            this.sendError(ws, 'Session ID and prompt required');
-            return;
-        }
-        
-        try {
-            const result = await this.sessionManager.executeCommand(sessionId, prompt, options);
-            
-            this.send(ws, {
-                type: 'command_result',
-                sessionId,
-                result
-            });
-            
-        } catch (error) {
-            this.sendError(ws, `Failed to execute command: ${error.message}`);
-        }
-    }
-
-    async handleTerminateProcess(ws, data) {
-        const { sessionId, force } = data;
-        
-        if (!sessionId) {
-            this.sendError(ws, 'Session ID required');
-            return;
-        }
-        
-        try {
-            const result = await this.sessionManager.terminateClaudeProcess(sessionId, force);
-            
-            this.send(ws, {
-                type: 'terminate_result',
-                sessionId,
-                result
-            });
-            
-        } catch (error) {
-            this.sendError(ws, `Failed to terminate process: ${error.message}`);
-        }
-    }
 
     handleGetSessions(ws) {
         const sessions = this.sessionManager.getAllSessions();

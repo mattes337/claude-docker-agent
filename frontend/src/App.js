@@ -19,18 +19,16 @@ function App() {
     sessions,
     createSession,
     stopSession,
-    executeCommand,
     clearSession,
     loadSessions,
     updateSession,
     appendSessionOutput,
     replaceSessionOutput,
     loadContainers,
-    removeContainer,
-    terminateProcess
+    removeContainer
   } = useSessionManager();
   
-  const { isConnected, terminateProcess: wsTerminateProcess } = useWebSocket(sessions, activeSessionId, updateSession, appendSessionOutput, replaceSessionOutput);
+  const { isConnected } = useWebSocket(sessions, activeSessionId, updateSession, appendSessionOutput, replaceSessionOutput);
 
   useEffect(() => {
     loadSessions();
@@ -69,13 +67,6 @@ function App() {
     }
   };
 
-  const handleExecuteCommand = async (command) => {
-    if (activeSessionId) {
-      return await executeCommand(activeSessionId, command);
-    }
-    return { success: false, error: 'No active session' };
-  };
-
   const handleClearSession = async () => {
     if (activeSessionId) {
       await clearSession(activeSessionId);
@@ -109,16 +100,6 @@ function App() {
       console.error('Failed to delete session:', error);
       alert('Failed to delete session: ' + error.message);
     }
-  };
-
-  const handleTerminateProcess = async (force = false) => {
-    if (activeSessionId) {
-      // Use WebSocket for real-time feedback
-      wsTerminateProcess(activeSessionId, force);
-      // Also call HTTP API as fallback
-      return await terminateProcess(activeSessionId, force);
-    }
-    return { success: false, error: 'No active session' };
   };
 
   const activeSession = activeSessionId ? sessions.get(activeSessionId) : null;
@@ -174,11 +155,9 @@ function App() {
           
           <MainContent
             activeSession={activeSession}
-            onExecuteCommand={handleExecuteCommand}
             onStopSession={handleStopSession}
             onClearSession={handleClearSession}
             onDeleteSession={handleDeleteSession}
-            onTerminateProcess={handleTerminateProcess}
           />
         </div>
       )}

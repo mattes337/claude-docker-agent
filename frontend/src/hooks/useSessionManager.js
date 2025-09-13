@@ -26,28 +26,8 @@ export const useSessionManager = () => {
     }
   };
 
-  const getSessionOutput = useCallback(async (sessionId) => {
-    const result = await apiCall(`/sessions/${sessionId}/output`);
-    
-    if (result.success) {
-      setSessions(prev => {
-        const newSessions = new Map(prev);
-        const session = newSessions.get(sessionId);
-        if (session) {
-          // Handle both array and string formats
-          if (Array.isArray(result.output)) {
-            session.output = result.output.map(item => item.data || item).join('');
-            session.rawOutput = result.output; // Keep raw array for type information
-          } else {
-            session.output = result.output || '';
-          }
-        }
-        return newSessions;
-      });
-    }
-
-    return result;
-  }, []);
+  // Output is now handled via WebSocket/Claude Terminal
+  // Removed getSessionOutput function as it's no longer needed
 
   const loadSessions = useCallback(async () => {
     const result = await apiCall('/sessions');
@@ -61,13 +41,11 @@ export const useSessionManager = () => {
       });
       setSessions(sessionMap);
       
-      // Load full output for each session
-      result.sessions.forEach(async (session) => {
-        await getSessionOutput(session.id);
-      });
+      // Note: Output is now handled via WebSocket/Claude Terminal
+      // No need to fetch output separately
     }
     return result;
-  }, [getSessionOutput]);
+  }, []);
 
   const createSession = useCallback(async (sessionData) => {
     const result = await apiCall('/sessions', {
@@ -109,26 +87,6 @@ export const useSessionManager = () => {
     return result;
   }, []);
 
-  const executeCommand = useCallback(async (sessionId, prompt) => {
-    const result = await apiCall(`/sessions/${sessionId}/execute`, {
-      method: 'POST',
-      body: JSON.stringify({ prompt })
-    });
-
-    if (result.success) {
-      // Add the command to the output immediately for better UX
-      setSessions(prev => {
-        const newSessions = new Map(prev);
-        const session = newSessions.get(sessionId);
-        if (session) {
-          session.output = (session.output || '') + `$ ${prompt}\n`;
-        }
-        return newSessions;
-      });
-    }
-
-    return result;
-  }, []);
 
   const clearSession = useCallback(async (sessionId) => {
     // This is a client-side operation to clear the output display
@@ -265,39 +223,17 @@ export const useSessionManager = () => {
     return result;
   }, []);
 
-  const terminateProcess = useCallback(async (sessionId, force = false) => {
-    const result = await apiCall(`/sessions/${sessionId}/terminate`, {
-      method: 'POST',
-      body: JSON.stringify({ force })
-    });
-
-    if (result.success) {
-      setSessions(prev => {
-        const newSessions = new Map(prev);
-        const session = newSessions.get(sessionId);
-        if (session) {
-          session.state = 'waiting_input';
-        }
-        return newSessions;
-      });
-    }
-
-    return result;
-  }, []);
 
   return {
     sessions,
     loadSessions,
     createSession,
     stopSession,
-    executeCommand,
     clearSession,
-    getSessionOutput,
     updateSession,
     appendSessionOutput,
     replaceSessionOutput,
     loadContainers,
-    removeContainer,
-    terminateProcess
+    removeContainer
   };
 };

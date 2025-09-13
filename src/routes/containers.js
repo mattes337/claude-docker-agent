@@ -200,61 +200,6 @@ module.exports = (dockerService) => {
         }
     );
 
-    // Execute command in container
-    router.post('/:sessionId/exec',
-        [
-            param('sessionId').isUUID().withMessage('Invalid session ID'),
-            body('command').isString().trim().isLength({ min: 1 }).withMessage('Command is required')
-        ],
-        handleValidationErrors,
-        async (req, res) => {
-            try {
-                const { command, options = {} } = req.body;
-                const { exec, stream } = await dockerService.execCommand(
-                    req.params.sessionId, 
-                    command, 
-                    options
-                );
-                
-                let output = '';
-                let errorOutput = '';
-                
-                stream.on('data', (chunk) => {
-                    const data = chunk.toString();
-                    if (chunk[0] === 1) { // stdout
-                        output += data.slice(8); // Remove header
-                    } else if (chunk[0] === 2) { // stderr
-                        errorOutput += data.slice(8); // Remove header
-                    }
-                });
-                
-                stream.on('end', async () => {
-                    const result = await exec.inspect();
-                    
-                    res.json({
-                        success: true,
-                        result: {
-                            exitCode: result.ExitCode,
-                            stdout: output,
-                            stderr: errorOutput
-                        }
-                    });
-                });
-                
-                stream.on('error', (error) => {
-                    res.status(500).json({
-                        success: false,
-                        error: error.message
-                    });
-                });
-            } catch (error) {
-                res.status(500).json({
-                    success: false,
-                    error: error.message
-                });
-            }
-        }
-    );
 
     // Stop container
     router.post('/:sessionId/stop',

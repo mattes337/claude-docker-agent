@@ -71,20 +71,6 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
         updateSession(data.sessionId, { status: 'running', state: 'ready' });
         break;
       
-      case 'output':
-        // Handle real-time output streaming
-        if (data.sessionId && data.output) {
-          appendSessionOutput(data.sessionId, data.output, data.rawOutput);
-        }
-        break;
-        
-      case 'output_replace':
-        // Handle screen replacement for Claude Code interface
-        if (data.sessionId && data.output !== undefined && replaceSessionOutput) {
-          console.log('Screen replacement detected for session:', data.sessionId);
-          replaceSessionOutput(data.sessionId, data.output, data.rawOutput);
-        }
-        break;
       
       case 'session_stopped':
         console.log('Session stopped:', data.sessionId);
@@ -103,29 +89,31 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
         }
         break;
       
-      case 'output_history':
-        if (data.sessionId && data.output !== undefined) {
-          // Convert array output to string
-          let outputString = '';
-          if (Array.isArray(data.output)) {
-            outputString = data.output.map(item => {
-              if (typeof item === 'string') return item;
-              if (typeof item === 'object' && item !== null) {
-                return item.data || item.content || item.message || '';
-              }
-              return String(item);
-            }).join('');
-          } else {
-            outputString = String(data.output || '');
-          }
-          updateSession(data.sessionId, { output: outputString });
+      
+      case 'usage_update':
+        if (data.sessionId && data.usage) {
+          updateSession(data.sessionId, { 
+            usage: data.usage,
+            lastUsageUpdate: new Date().toISOString()
+          });
         }
         break;
-      
-      case 'terminate_result':
-        console.log('Process termination result:', data);
-        if (data.result?.success) {
-          updateSession(data.sessionId, { state: 'waiting_input' });
+        
+      case 'cost_update':
+        if (data.sessionId && typeof data.totalCost === 'number') {
+          updateSession(data.sessionId, { 
+            totalCost: data.totalCost,
+            lastCostUpdate: new Date().toISOString()
+          });
+        }
+        break;
+        
+      case 'message_metadata':
+        if (data.sessionId && data.metadata) {
+          updateSession(data.sessionId, { 
+            messageMetadata: data.metadata,
+            lastMetadataUpdate: new Date().toISOString()
+          });
         }
         break;
       
@@ -163,13 +151,5 @@ export const useWebSocket = (sessions, activeSessionId, updateSession, appendSes
     }
   };
 
-  const terminateProcess = (sessionId, force = false) => {
-    sendMessage({
-      type: 'terminate_process',
-      sessionId,
-      force
-    });
-  };
-
-  return { isConnected, sendMessage, terminateProcess };
+  return { isConnected, sendMessage };
 };

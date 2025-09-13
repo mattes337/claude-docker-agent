@@ -10,9 +10,9 @@ const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
 
-const SessionManager = require('./services/SessionManager');
+const ClaudeSessionManager = require('./services/ClaudeSessionManager');
 const DockerService = require('./services/DockerService');
-const WebSocketService = require('./services/WebSocketService');
+const ClaudeWebSocketService = require('./services/ClaudeWebSocketService');
 const { errorHandler, notFound } = require('./middleware/errorHandlers');
 
 class ClaudeDockerAgent {
@@ -23,8 +23,8 @@ class ClaudeDockerAgent {
         
         // Initialize services
         this.dockerService = new DockerService();
-        this.sessionManager = new SessionManager(this.dockerService);
-        this.wsService = new WebSocketService(this.server, this.sessionManager);
+        this.sessionManager = new ClaudeSessionManager(this.dockerService);
+        this.wsService = new ClaudeWebSocketService(this.server, this.sessionManager);
         
         this.setupMiddleware();
         this.setupRoutes();
@@ -146,7 +146,7 @@ class ClaudeDockerAgent {
             console.log('✅ All sessions stopped');
 
             // Close WebSocket connections
-            this.wsService.close();
+            await this.wsService.shutdown();
             console.log('✅ WebSocket connections closed');
 
             // Close server

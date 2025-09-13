@@ -317,34 +317,6 @@ class DockerService {
         }
     }
 
-    async execCommand(sessionId, command, options = {}) {
-        const container = this.containers.get(sessionId);
-        if (!container) {
-            throw new Error(`Container not found for session ${sessionId}`);
-        }
-
-        try {
-            const exec = await container.exec({
-                Cmd: Array.isArray(command) ? command : ['bash', '-c', command],
-                AttachStdout: true,
-                AttachStderr: true,
-                AttachStdin: options.interactive || false,
-                Tty: options.tty || false,
-                WorkingDir: options.workingDir || '/workspace',
-                User: options.user || undefined
-            });
-
-            const stream = await exec.start({
-                hijack: options.interactive || false,
-                stdin: options.interactive || false,
-                Detach: false
-            });
-
-            return { exec, stream };
-        } catch (error) {
-            throw new Error(`Failed to execute command: ${error.message}`);
-        }
-    }
 
     async getContainerLogs(sessionId, options = {}) {
         const container = this.containers.get(sessionId);
